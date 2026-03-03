@@ -74,6 +74,7 @@
 
         <div class="controles" style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
             <button id="btn-sacar" onclick="jugarTurno()">Sacar Carta</button>
+            <button id="btn-auto" onclick="toggleAutoPlay()" style="background-color: #3498db; color: white;">▶ Simulación Automática</button>
             <button onclick="reiniciarJuego()" style="background-color: #e74c3c; color: white;">Reiniciar</button>
         </div>
 
@@ -83,17 +84,20 @@
 </div>
 
 <script>
-    // MODELO DE DATOS Y ESTRUCTURAS
+    // [MODELO DE DATOS] Definición de constantes y variables de estado
     const palos = ['Oros', 'Copas', 'Espadas', 'Bastos'];
-    let mazo = [];
-    let pista = [];
-    let mazoRobo = [];
-    let posiciones = {};
-    let cartasVolteadas = 0;
-    let juegoTerminado = false;
+    let mazo = [];          // Array para almacenar la baraja completa
+    let pista = [];         // Array para las cartas de penalización
+    let mazoRobo = [];      // Array (Pila) para robar cartas
+    let posiciones = {};    // Objeto para rastrear la posición de cada caballo
+    let cartasVolteadas = 0; // Contador de penalizaciones activadas
+    let juegoTerminado = false; // Bandera de estado
+    let intervaloAuto = null;   // Variable para controlar la automatización
 
     // INICIALIZACIÓN
     function inicializarDatos() {
+        detenerAutoPlay(); // [RESTRICCIÓN] Asegurar que no haya bucles corriendo
+
         // Reiniciar restricciones y estados
         posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
         cartasVolteadas = 0;
@@ -101,7 +105,7 @@
         document.getElementById('btn-sacar').disabled = false;
         document.getElementById('log').innerHTML = "<em>Juego iniciado. ¡Saca una carta!</em><br>";
 
-        // Crear baraja (números 1 al 7, 10 y 12. Se excluyen los 11/Caballos)
+        // [ESTRUCTURA] Bucle anidado para generar la baraja
         let cartasPermitidas = [1, 2, 3, 4, 5, 6, 7, 10, 12];
         mazo = [];
         for (let palo of palos) {
@@ -110,13 +114,13 @@
             }
         }
 
-        // Mezclar mazo (Algoritmo Fisher-Yates)
+        // [ALGORITMO] Mezclar mazo (Fisher-Yates)
         for (let i = mazo.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [mazo[i], mazo[j]] = [mazo[j], mazo[i]];
         }
 
-        // Estructuras: Separar pista y mazo de robo
+        // [OPERADORES] Manipulación de Arrays (Splice)
         pista = mazo.splice(0, 7); // Toma las primeras 7 para la pista
         mazoRobo = mazo; // Quedan 29 para robar
 
@@ -131,17 +135,18 @@
         dibujarTablero();
     }
 
-    // LÓGICA DEL TURNO (Operadores y Metodología)
+    // [LÓGICA] Función principal del turno
     function jugarTurno() {
         if (juegoTerminado) return;
 
         const btn = document.getElementById('btn-sacar');
         btn.disabled = true;
 
-        // Restricción: Validar que haya cartas
+        // [RESTRICCIÓN] Validar que el mazo no esté vacío
         if (mazoRobo.length === 0) {
             logear("El mazo se quedó sin cartas. Empate técnico.");
             juegoTerminado = true;
+            detenerAutoPlay();
             return;
         }
 
@@ -154,15 +159,15 @@
 
         logear(`🎯 Salió el ${cartaSacada.numero} de ${cartaSacada.palo}. El caballo de ${cartaSacada.palo} avanza.`);
 
-        // Operador: Incrementar posición
+        // [OPERADOR] Aritmético: Incremento
         posiciones[cartaSacada.palo]++;
         actualizarUI();
 
-        // 2. Comprobar si hay ganador
+        // [ESTRUCTURA] Condicional para verificar victoria
         if (posiciones[cartaSacada.palo] >= 7) {
             logear(`🏆 <strong>¡EL CABALLO DE ${cartaSacada.palo.toUpperCase()} HA GANADO LA CARRERA!</strong>`);
             juegoTerminado = true;
-            // El botón se queda deshabilitado
+            detenerAutoPlay();
             return;
         }
 
@@ -173,7 +178,7 @@
     }
 
     function verificarPista(btn) {
-        // ¿El último caballo ya pasó la línea de la próxima carta de pista por voltear?
+        // [LÓGICA] Comprobar condición de penalización (el último caballo cruzó la línea)
         let posicionMinima = Math.min(...Object.values(posiciones));
 
         if (posicionMinima > cartasVolteadas) {
@@ -188,15 +193,39 @@
 
             // Retraso para ver la carta antes de retroceder
             setTimeout(() => {
-                // Operador: Decrementar posición
+                // [OPERADOR] Decremento (Penalización)
                 posiciones[cartaPista.palo]--;
                 actualizarUI();
-                btn.disabled = false;
+                if(!intervaloAuto) btn.disabled = false; // Solo reactivar botón si no es automático
             }, 1000);
 
         } else {
             // No se voltea carta, turno termina
-            btn.disabled = false;
+            if(!intervaloAuto) btn.disabled = false;
+        }
+    }
+
+    // [AUTOMATIZACIÓN] Función para simular la partida
+    function toggleAutoPlay() {
+        const btnAuto = document.getElementById('btn-auto');
+        if (intervaloAuto) {
+            detenerAutoPlay();
+        } else {
+            if (juegoTerminado) reiniciarJuego();
+            btnAuto.innerHTML = "⏸ Pausar Simulación";
+            btnAuto.style.backgroundColor = "#e67e22";
+            // Ejecuta un turno cada 2 segundos para dar tiempo a las animaciones
+            intervaloAuto = setInterval(jugarTurno, 2000);
+        }
+    }
+
+    function detenerAutoPlay() {
+        clearInterval(intervaloAuto);
+        intervaloAuto = null;
+        const btnAuto = document.getElementById('btn-auto');
+        if(btnAuto) {
+            btnAuto.innerHTML = "▶ Simulación Automática";
+            btnAuto.style.backgroundColor = "#3498db";
         }
     }
 
