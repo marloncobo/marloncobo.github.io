@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carrera de Caballos - Baraja Española</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #2c7a2c; color: white; text-align: center; margin: 0; padding: 20px; }
+        .tablero { display: flex; justify-content: center; gap: 50px; margin-top: 30px; }
+        .caballos-container { display: flex; flex-direction: column; gap: 20px; }
+        .carril { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 10px; width: 600px; }
+        .nombre-palo { width: 80px; font-weight: bold; font-size: 1.2em; text-transform: uppercase; }
+        .casillas { display: flex; gap: 5px; flex-grow: 1; position: relative; }
+        .casilla { width: 40px; height: 60px; border: 2px dashed rgba(255,255,255,0.4); border-radius: 5px; }
+        .caballo-ficha { width: 40px; height: 60px; background-color: white; color: black; font-weight: bold; border-radius: 5px; display: flex; align-items: center; justify-content: center; position: absolute; transition: left 0.3s ease; }
+        .pista-container { display: flex; gap: 10px; margin-top: 40px; justify-content: center; }
+        .carta-pista { width: 50px; height: 75px; background-color: #8b0000; border: 2px solid white; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: transparent; font-size: 0.8em; }
+        .carta-pista.volteada { background-color: white; color: black; font-weight: bold; border: 2px solid black; }
+        .controles { margin-top: 30px; }
+        button { padding: 15px 30px; font-size: 1.2em; cursor: pointer; border-radius: 8px; border: none; background-color: #f1c40f; font-weight: bold; transition: 0.2s; }
+        button:hover { background-color: #f39c12; }
+        button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+        #log { margin-top: 20px; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px; max-width: 600px; margin-left: auto; margin-right: auto; height: 100px; overflow-y: auto; text-align: left; }
+    </style>
+</head>
+<body>
+
+<h1>Carrera de Caballos</h1>
+
+<div class="tablero">
+    <div class="caballos-container" id="carriles">
+    </div>
+</div>
+
+<h3>Cartas de la Pista (Retrocesos)</h3>
+<div class="pista-container" id="pista-ui">
+</div>
+
+<div class="controles">
+    <button id="btn-sacar" onclick="jugarTurno()">Sacar Carta</button>
+    <button onclick="reiniciarJuego()" style="background-color: #e74c3c; color: white; margin-left: 10px;">Reiniciar Juego</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+    // MODELO DE DATOS Y ESTRUCTURAS
+    const palos = ['Oros', 'Copas', 'Espadas', 'Bastos'];
+    let mazo = [];
+    let pista = [];
+    let mazoRobo = [];
+    let posiciones = {};
+    let cartasVolteadas = 0;
+    let juegoTerminado = false;
+
+    // INICIALIZACIÓN
+    function inicializarDatos() {
+        // Reiniciar restricciones y estados
+        posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
+        cartasVolteadas = 0;
+        juegoTerminado = false;
+        document.getElementById('btn-sacar').disabled = false;
+        document.getElementById('log').innerHTML = "<em>Juego iniciado. ¡Saca una carta!</em><br>";
+
+        // Crear baraja (números 1 al 7, 10 y 12. Se excluyen los 11/Caballos)
+        let cartasPermitidas = [1, 2, 3, 4, 5, 6, 7, 10, 12];
+        mazo = [];
+        for (let palo of palos) {
+            for (let num of cartasPermitidas) {
+                mazo.push({ palo: palo, numero: num });
+            }
+        }
+
+        // Mezclar mazo (Algoritmo Fisher-Yates)
+        for (let i = mazo.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [mazo[i], mazo[j]] = [mazo[j], mazo[i]];
+        }
+
+        // Estructuras: Separar pista y mazo de robo
+        pista = mazo.splice(0, 7); // Toma las primeras 7 para la pista
+        mazoRobo = mazo; // Quedan 29 para robar
+
+        dibujarTablero();
+    }
+
+    // LÓGICA DEL TURNO (Operadores y Metodología)
+    function jugarTurno() {
+        if (juegoTerminado) return;
+
+        const btn = document.getElementById('btn-sacar');
+        btn.disabled = true;
+
+        // Restricción: Validar que haya cartas
+        if (mazoRobo.length === 0) {
+            logear("El mazo se quedó sin cartas. Empate técnico.");
+            juegoTerminado = true;
+            return;
+        }
+
+        // 1. Sacar carta
+        let cartaSacada = mazoRobo.pop();
+        logear(`🎯 Salió el ${cartaSacada.numero} de ${cartaSacada.palo}. El caballo de ${cartaSacada.palo} avanza.`);
+
+        // Operador: Incrementar posición
+        posiciones[cartaSacada.palo]++;
+        actualizarUI();
+
+        // 2. Comprobar si hay ganador
+        if (posiciones[cartaSacada.palo] >= 7) {
+            logear(`🏆 <strong>¡EL CABALLO DE ${cartaSacada.palo.toUpperCase()} HA GANADO LA CARRERA!</strong>`);
+            juegoTerminado = true;
+            // El botón se queda deshabilitado
+            return;
+        }
+
+        // 3. Comprobar pista con retraso para permitir animación
+        setTimeout(() => {
+            verificarPista(btn);
+        }, 800);
+    }
+
+    function verificarPista(btn) {
+        // ¿El último caballo ya pasó la línea de la próxima carta de pista por voltear?
+        let posicionMinima = Math.min(...Object.values(posiciones));
+
+        if (posicionMinima > cartasVolteadas) {
+            let cartaPista = pista[cartasVolteadas];
+            logear(`⚠️ ¡Todos pasaron la línea ${cartasVolteadas + 1}! Se voltea carta de pista: ${cartaPista.numero} de ${cartaPista.palo}.`);
+
+            // Voltear carta (actualizar estado y UI)
+            cartasVolteadas++;
+            actualizarUI();
+
+            logear(`🛑 El caballo de ${cartaPista.palo} retrocede un espacio.`);
+
+            // Retraso para ver la carta antes de retroceder
+            setTimeout(() => {
+                // Operador: Decrementar posición
+                posiciones[cartaPista.palo]--;
+                actualizarUI();
+                btn.disabled = false;
+            }, 1000);
+
+        } else {
+            // No se voltea carta, turno termina
+            btn.disabled = false;
+        }
+    }
+
+    // INTERFAZ DE USUARIO (Render)
+    function dibujarTablero() {
+        const carrilesDiv = document.getElementById('carriles');
+        carrilesDiv.innerHTML = '';
+
+        palos.forEach((palo, index) => {
+            let carril = `<div class="carril">
+                    <div class="nombre-palo" style="color: ${palo==='Oros'?'#f1c40f':(palo==='Copas'?'#e74c3c':(palo==='Espadas'?'#3498db':'#8e44ad'))}">${palo}</div>
+                    <div class="casillas">`;
+            for(let i=0; i<=7; i++) {
+                carril += `<div class="casilla"></div>`;
+            }
+            // La ficha (Caballo)
+            carril += `<div class="caballo-ficha" id="ficha-${palo}" style="left: 0px;">🐎</div>
+                    </div></div>`;
+            carrilesDiv.innerHTML += carril;
+        });
+
+        const pistaUI = document.getElementById('pista-ui');
+        pistaUI.innerHTML = '';
+        for(let i=0; i<7; i++) {
+            pistaUI.innerHTML += `<div class="carta-pista" id="pista-${i}">?</div>`;
+        }
+        actualizarUI();
+    }
+
+    function actualizarUI() {
+        // Actualizar caballos
+        palos.forEach(palo => {
+            const ficha = document.getElementById(`ficha-${palo}`);
+            // Cada casilla mide 40px + 4px borde = 44px. Gap 5px. Total 49px.
+            // +2px para centrar en el contenido (borde es 2px)
+            ficha.style.left = ((posiciones[palo] * 49) + 2) + 'px';
+        });
+
+        // Actualizar pista
+        for(let i=0; i<7; i++) {
+            const cartaUI = document.getElementById(`pista-${i}`);
+            if (i < cartasVolteadas) {
+                cartaUI.className = "carta-pista volteada";
+                cartaUI.innerHTML = `${pista[i].numero}<br>${pista[i].palo.substring(0,3)}`;
+            } else {
+                cartaUI.className = "carta-pista";
+                cartaUI.innerHTML = "?";
+            }
+        }
+    }
+
+    function logear(mensaje) {
+        const logBox = document.getElementById('log');
+        logBox.innerHTML = mensaje + "<br>" + logBox.innerHTML;
+    }
+
+    function reiniciarJuego() {
+        inicializarDatos();
+    }
+
+    // Arrancar juego al cargar
+    window.onload = inicializarDatos;
+</script>
+</body>
+</html>
