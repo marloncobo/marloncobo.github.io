@@ -1,15 +1,22 @@
+// URL de tu servidor en Railway (SIN la barra al final)
+// Ejemplo: const BACKEND_URL = 'https://carreras-caballo-production.up.railway.app';
+const BACKEND_URL = 'mysql://root:vFKYHQIyVEiwxdduXWlUBLadKtmNJASl@switchyard.proxy.rlwy.net:35127/railway';
+
+const socket = io(BACKEND_URL); // Conectar al servidor WebSocket remoto
+
 /* --- GESTIÓN DE LA APLICACIÓN (USUARIOS Y VISTAS) --- */
 const app = {
     usuarioActual: null,
     apuestas: [], // { nombre: "Juan", caballo: "Oros", cantidad: 100 }
 
     init: function() {
-        // Verificar si hay sesión guardada
+        // Verificar si hay sesión guardada (solo para mantener la vista, los datos reales vienen del servidor)
         const usuarioGuardado = localStorage.getItem('usuarioActual');
         if (usuarioGuardado) {
             this.usuarioActual = JSON.parse(usuarioGuardado);
             this.mostrarVista('vista-lobby');
             this.actualizarInfoUsuario();
+            socket.emit('usuarioConectado', this.usuarioActual);
         } else {
             this.mostrarVista('vista-login');
         }
@@ -20,32 +27,56 @@ const app = {
         document.getElementById(idVista).classList.add('activa');
     },
 
-    registrarUsuario: function() {
+    registrarUsuario: async function() {
         const nombre = document.getElementById('input-usuario').value.trim();
         if (!nombre) return this.mostrarError("Ingresa un nombre válido.");
 
-        if (localStorage.getItem('user_' + nombre)) {
-            return this.mostrarError("El usuario ya existe. Intenta iniciar sesión.");
-        }
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/registrar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre })
+            });
 
-        const nuevoUsuario = { nombre: nombre, puntos: 1000 };
-        localStorage.setItem('user_' + nombre, JSON.stringify(nuevoUsuario));
-        this.iniciarSesion(nombre);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al registrar usuario.');
+            }
+
+            const nuevoUsuario = await response.json();
+            this.iniciarSesion(nuevoUsuario.nombre);
+
+        } catch (error) {
+            this.mostrarError(error.message);
+        }
     },
 
-    iniciarSesion: function(nombreInput = null) {
+    iniciarSesion: async function(nombreInput = null) {
         const nombre = nombreInput || document.getElementById('input-usuario').value.trim();
         if (!nombre) return this.mostrarError("Ingresa un nombre.");
 
-        const datosUsuario = localStorage.getItem('user_' + nombre);
-        if (!datosUsuario) return this.mostrarError("Usuario no encontrado. Regístrate primero.");
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre })
+            });
 
-        this.usuarioActual = JSON.parse(datosUsuario);
-        localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
-        
-        this.mostrarVista('vista-lobby');
-        this.actualizarInfoUsuario();
-        this.limpiarApuestas();
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Usuario no encontrado.');
+            }
+
+            this.usuarioActual = await response.json();
+            localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
+            
+            this.mostrarVista('vista-lobby');
+            this.actualizarInfoUsuario();
+            socket.emit('usuarioConectado', this.usuarioActual);
+
+        } catch (error) {
+            this.mostrarError(error.message);
+        }
     },
 
     cerrarSesion: function() {
@@ -58,10 +89,6 @@ const app = {
         if (!this.usuarioActual) return;
         document.getElementById('lobby-usuario').innerText = this.usuarioActual.nombre;
         document.getElementById('lobby-puntos').innerText = this.usuarioActual.puntos;
-        
-        // Guardar estado actualizado
-        localStorage.setItem('user_' + this.usuarioActual.nombre, JSON.stringify(this.usuarioActual));
-        localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
     },
 
     mostrarError: function(msg) {
@@ -81,81 +108,73 @@ const app = {
         if (!cantidad || cantidad < 100) return alert("La apuesta mínima es de 100 puntos.");
         if (cantidad > this.usuarioActual.puntos) return alert("No tienes suficientes puntos.");
 
-        // Descontar puntos temporalmente (se devuelven si cancela o gana)
-        this.usuarioActual.puntos -= cantidad;
-        this.actualizarInfoUsuario();
-
-        this.apuestas.push({ nombre, caballo, cantidad });
-        this.renderizarListaApuestas();
+        // Enviar apuesta al servidor
+        socket.emit('realizarApuesta', { nombre, caballo, cantidad });
         
         // Limpiar campos
         document.getElementById('apuesta-nombre').value = "";
         document.getElementById('apuesta-cantidad').value = "";
     },
 
-    renderizarListaApuestas: function() {
+    renderizarListaApuestas: function(apuestas) {
         const lista = document.getElementById('lista-apuestas');
         lista.innerHTML = "";
-        this.apuestas.forEach((apuesta, index) => {
+        apuestas.forEach((apuesta, index) => {
             const li = document.createElement('li');
             li.innerHTML = `
                 <span><strong>${apuesta.nombre}</strong> apuesta ${apuesta.cantidad} a ${apuesta.caballo}</span>
-                <button onclick="app.eliminarApuesta(${index})" style="background:#e74c3c; color:white; border:none; padding:5px; border-radius:3px;">X</button>
             `;
             lista.appendChild(li);
         });
 
-        document.getElementById('btn-iniciar-carrera').disabled = this.apuestas.length === 0;
-    },
-
-    eliminarApuesta: function(index) {
-        const apuesta = this.apuestas[index];
-        this.usuarioActual.puntos += apuesta.cantidad; // Devolver puntos
-        this.actualizarInfoUsuario();
-        
-        this.apuestas.splice(index, 1);
-        this.renderizarListaApuestas();
-    },
-
-    limpiarApuestas: function() {
-        this.apuestas = [];
-        this.renderizarListaApuestas();
+        document.getElementById('btn-iniciar-carrera').disabled = apuestas.length === 0;
     },
 
     irALaCarrera: function() {
         if (this.apuestas.length === 0) return;
-        this.mostrarVista('vista-juego');
-        juego.inicializarDatos();
+        socket.emit('iniciarCarrera');
     },
 
     volverAlLobby: function() {
         document.getElementById('modal-resultados').style.display = "none";
         this.mostrarVista('vista-lobby');
-        this.limpiarApuestas(); // Reiniciar apuestas para la siguiente ronda
     },
 
     /* --- TIENDA DE PUNTOS --- */
-    comprarPuntos: function(cantidad) {
+    comprarPuntos: async function(cantidad) {
         if (confirm(`¿Deseas comprar ${cantidad} puntos?`)) {
-            this.usuarioActual.puntos += cantidad;
-            this.actualizarInfoUsuario();
-            alert(`¡Has comprado ${cantidad} puntos!`);
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/comprar-puntos`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nombre: this.usuarioActual.nombre, cantidad })
+                });
+
+                if (!response.ok) throw new Error('Error al comprar puntos.');
+
+                const usuarioActualizado = await response.json();
+                this.usuarioActual = usuarioActualizado;
+                this.actualizarInfoUsuario();
+                alert(`¡Has comprado ${cantidad} puntos!`);
+
+            } catch (error) {
+                alert(error.message);
+            }
         }
     },
 
-    procesarResultados: function(caballoGanador) {
+    procesarResultados: function(ganador) {
         const modal = document.getElementById('modal-resultados');
         const lista = document.getElementById('lista-ganancias');
         const titulo = document.getElementById('titulo-ganador');
         
-        titulo.innerHTML = `🏆 ¡Gana ${caballoGanador}!`;
+        titulo.innerHTML = `🏆 ¡Gana ${ganador}!`;
         lista.innerHTML = "";
 
         this.apuestas.forEach(apuesta => {
             const div = document.createElement('div');
-            if (apuesta.caballo === caballoGanador) {
+            if (apuesta.caballo === ganador) {
                 const ganancia = apuesta.cantidad * 5;
-                this.usuarioActual.puntos += ganancia;
                 div.className = "ganador";
                 div.innerHTML = `🎉 <strong>${apuesta.nombre}</strong> ganó ${ganancia} puntos!`;
             } else {
@@ -165,47 +184,24 @@ const app = {
             lista.appendChild(div);
         });
 
-        this.actualizarInfoUsuario();
         modal.style.display = "block";
     }
 };
 
-/* --- LÓGICA DEL JUEGO (ADAPTADA) --- */
+/* --- LÓGICA DEL JUEGO (CLIENTE) --- */
 const juego = {
     palos: ['Oros', 'Copas', 'Espadas', 'Bastos'],
-    mazo: [],
-    pista: [],
-    mazoRobo: [],
     posiciones: {},
     cartasVolteadas: 0,
-    juegoTerminado: false,
-    intervaloAuto: null,
+    pista: [],
 
-    inicializarDatos: function() {
-        this.detenerAutoPlay();
-        this.posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
-        this.cartasVolteadas = 0;
-        this.juegoTerminado = false;
+    inicializarDatos: function(estado) {
+        this.posiciones = estado.posiciones;
+        this.cartasVolteadas = estado.cartasVolteadas;
+        this.pista = estado.pista;
         
         document.getElementById('btn-sacar').disabled = false;
         document.getElementById('log').innerHTML = "<em>Carrera iniciada. ¡Buena suerte!</em><br>";
-
-        // Crear y mezclar baraja
-        let cartasPermitidas = [1, 2, 3, 4, 5, 6, 7, 10, 12];
-        this.mazo = [];
-        for (let palo of this.palos) {
-            for (let num of cartasPermitidas) {
-                this.mazo.push({ palo: palo, numero: num });
-            }
-        }
-
-        for (let i = this.mazo.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [this.mazo[i], this.mazo[j]] = [this.mazo[j], this.mazo[i]];
-        }
-
-        this.pista = this.mazo.splice(0, 7);
-        this.mazoRobo = this.mazo;
 
         // Reset UI
         document.getElementById('mazo-visual').style.opacity = '1';
@@ -219,82 +215,7 @@ const juego = {
     },
 
     jugarTurno: function() {
-        if (this.juegoTerminado) return;
-
-        const btn = document.getElementById('btn-sacar');
-        btn.disabled = true;
-
-        if (this.mazoRobo.length === 0) {
-            this.logear("El mazo se quedó sin cartas. Empate técnico.");
-            this.juegoTerminado = true;
-            this.detenerAutoPlay();
-            return;
-        }
-
-        let cartaSacada = this.mazoRobo.pop();
-        if (this.mazoRobo.length === 0) document.getElementById('mazo-visual').style.opacity = '0.5';
-        this.mostrarCartaGrande(cartaSacada);
-
-        this.logear(`🎯 Salió el ${cartaSacada.numero} de ${cartaSacada.palo}.`);
-        this.posiciones[cartaSacada.palo]++;
-        this.actualizarUI();
-
-        if (this.posiciones[cartaSacada.palo] >= 7) {
-            this.logear(`🏆 <strong>¡GANÓ ${cartaSacada.palo.toUpperCase()}!</strong>`);
-            this.juegoTerminado = true;
-            this.detenerAutoPlay();
-            setTimeout(() => app.procesarResultados(cartaSacada.palo), 1500);
-            return;
-        }
-
-        setTimeout(() => {
-            this.verificarPista(btn);
-        }, 800);
-    },
-
-    verificarPista: function(btn) {
-        let posicionMinima = Math.min(...Object.values(this.posiciones));
-
-        if (posicionMinima > this.cartasVolteadas) {
-            let cartaPista = this.pista[this.cartasVolteadas];
-            this.logear(`⚠️ ¡Todos pasaron! Se voltea: ${cartaPista.numero} de ${cartaPista.palo}.`);
-            
-            this.cartasVolteadas++;
-            this.actualizarUI();
-
-            this.logear(`🛑 ${cartaPista.palo} retrocede.`);
-
-            setTimeout(() => {
-                this.posiciones[cartaPista.palo]--;
-                this.actualizarUI();
-                if(!this.intervaloAuto) btn.disabled = false;
-            }, 1000);
-
-        } else {
-            if(!this.intervaloAuto) btn.disabled = false;
-        }
-    },
-
-    toggleAutoPlay: function() {
-        const btnAuto = document.getElementById('btn-auto');
-        if (this.intervaloAuto) {
-            this.detenerAutoPlay();
-        } else {
-            if (this.juegoTerminado) return;
-            btnAuto.innerHTML = "⏸ Pausar";
-            btnAuto.style.backgroundColor = "#e67e22";
-            this.intervaloAuto = setInterval(() => this.jugarTurno(), 2000);
-        }
-    },
-
-    detenerAutoPlay: function() {
-        clearInterval(this.intervaloAuto);
-        this.intervaloAuto = null;
-        const btnAuto = document.getElementById('btn-auto');
-        if(btnAuto) {
-            btnAuto.innerHTML = "▶ Auto";
-            btnAuto.style.backgroundColor = "#3498db";
-        }
+        socket.emit('sacarCarta');
     },
 
     dibujarTablero: function() {
@@ -324,7 +245,9 @@ const juego = {
     actualizarUI: function() {
         this.palos.forEach(palo => {
             const ficha = document.getElementById(`ficha-${palo}`);
-            ficha.style.left = ((this.posiciones[palo] * 49) + 2) + 'px';
+            if (ficha) {
+                ficha.style.left = ((this.posiciones[palo] * 49) + 2) + 'px';
+            }
         });
 
         for(let i=0; i<7; i++) {
@@ -360,6 +283,52 @@ const juego = {
         logBox.innerHTML = mensaje + "<br>" + logBox.innerHTML;
     }
 };
+
+// --- EVENTOS SOCKET.IO ---
+socket.on('actualizarApuestas', (apuestas) => {
+    app.apuestas = apuestas;
+    app.renderizarListaApuestas(apuestas);
+});
+
+socket.on('inicioCarrera', (estado) => {
+    app.mostrarVista('vista-juego');
+    juego.inicializarDatos(estado);
+});
+
+socket.on('cartaSacada', (data) => {
+    juego.mostrarCartaGrande(data.carta);
+    juego.logear(`🎯 Salió el ${data.carta.numero} de ${data.carta.palo}.`);
+    juego.posiciones = data.posiciones;
+    juego.actualizarUI();
+});
+
+socket.on('cartaPistaVolteada', (data) => {
+    juego.logear(`⚠️ ¡Todos pasaron! Se voltea: ${data.carta.numero} de ${data.carta.palo}.`);
+    juego.cartasVolteadas = data.indice + 1;
+    juego.actualizarUI();
+});
+
+socket.on('retrocesoCaballo', (data) => {
+    juego.logear(`🛑 ${data.palo} retrocede.`);
+    juego.posiciones = data.posiciones;
+    juego.actualizarUI();
+});
+
+socket.on('finCarrera', (data) => {
+    if (data.ganador) {
+        juego.logear(`🏆 <strong>¡GANÓ ${data.ganador.toUpperCase()}!</strong>`);
+        setTimeout(() => app.procesarResultados(data.ganador), 1500);
+    } else {
+        juego.logear(`🏁 Carrera terminada: ${data.motivo}`);
+    }
+});
+
+socket.on('actualizarSaldos', () => {
+    // Recargar datos del usuario desde el servidor
+    if (app.usuarioActual) {
+        app.iniciarSesion(app.usuarioActual.nombre);
+    }
+});
 
 // Inicializar aplicación al cargar
 window.onload = function() {
