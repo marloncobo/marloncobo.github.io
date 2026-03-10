@@ -1,7 +1,7 @@
 require('dotenv').config(); // Cargar variables de entorno desde .env
 
 const express = require('express');
-const http = require('http');
+const http = require('https');
 const { Server } = require('socket.io');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
