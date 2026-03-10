@@ -3,46 +3,119 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carrera de Caballos - Baraja Española</title>
+    <title>Carrera de Caballos - Apuestas</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<h1>Carrera de Caballos</h1>
+    <!-- VISTA 1: LOGIN Y REGISTRO -->
+    <div id="vista-login" class="vista activa">
+        <h1>🏇 Carreras de Caballos</h1>
+        <div class="login-container">
+            <h2>Iniciar Sesión / Registro</h2>
+            <input type="text" id="input-usuario" placeholder="Nombre de usuario">
+            <div class="botones-login">
+                <button onclick="app.iniciarSesion()">Entrar</button>
+                <button onclick="app.registrarUsuario()" class="btn-secundario">Registrarse</button>
+            </div>
+            <p id="mensaje-login" class="mensaje-error"></p>
+        </div>
+    </div>
 
-<div class="contenedor-juego">
+    <!-- VISTA 2: LOBBY (APUESTAS Y TIENDA) -->
+    <div id="vista-lobby" class="vista">
+        <header>
+            <div class="usuario-info">
+                👤 <span id="lobby-usuario">Invitado</span> | 💰 <span id="lobby-puntos">0</span> pts
+            </div>
+            <button onclick="app.cerrarSesion()" class="btn-pequeno">Salir</button>
+        </header>
 
-    <!-- COLUMNA IZQUIERDA: La Carrera -->
-    <div class="columna-izquierda">
-        <div class="tablero">
-            <div class="caballos-container" id="carriles">
+        <h1>Zona de Apuestas</h1>
+
+        <div class="panel-central">
+            <!-- Panel de Apuestas -->
+            <div class="card apuesta-card">
+                <h3>🎰 Realizar Apuesta</h3>
+                <p>Máximo 4 jugadores por carrera.</p>
+
+                <div class="form-apuesta">
+                    <input type="text" id="apuesta-nombre" placeholder="Nombre del Jugador">
+                    <select id="apuesta-caballo">
+                        <option value="Oros">🟡 Oros</option>
+                        <option value="Copas">🔴 Copas</option>
+                        <option value="Espadas">🔵 Espadas</option>
+                        <option value="Bastos">🟢 Bastos</option>
+                    </select>
+                    <input type="number" id="apuesta-cantidad" placeholder="Cantidad (ej. 100)" min="100">
+                    <button onclick="app.agregarApuesta()">Añadir Jugador</button>
+                </div>
+
+                <ul id="lista-apuestas" class="lista-apuestas">
+                    <!-- Aquí se añaden los jugadores -->
+                </ul>
+
+                <button id="btn-iniciar-carrera" onclick="app.irALaCarrera()" disabled class="btn-grande">🏁 INICIAR CARRERA</button>
+            </div>
+
+            <!-- Tienda -->
+            <div class="card tienda-card">
+                <h3>🛒 Tienda de Puntos</h3>
+                <div class="paquete" onclick="app.comprarPuntos(1000)">
+                    <span>1,000 pts</span>
+                    <button>Comprar</button>
+                </div>
+                <div class="paquete" onclick="app.comprarPuntos(5000)">
+                    <span>5,000 pts</span>
+                    <button>Comprar</button>
+                </div>
+                <div class="paquete" onclick="app.comprarPuntos(10000)">
+                    <span>10,000 pts</span>
+                    <button>Comprar</button>
+                </div>
             </div>
         </div>
+    </div>
 
-        <h3>Cartas de la Pista (Retrocesos)</h3>
-        <div class="pista-container" id="pista-ui">
+    <!-- VISTA 3: EL JUEGO (TABLERO) -->
+    <div id="vista-juego" class="vista">
+        <div class="contenedor-juego">
+            <!-- COLUMNA IZQUIERDA: La Carrera -->
+            <div class="columna-izquierda">
+                <div class="tablero">
+                    <div class="caballos-container" id="carriles"></div>
+                </div>
+                <h3>Cartas de la Pista (Retrocesos)</h3>
+                <div class="pista-container" id="pista-ui"></div>
+            </div>
+
+            <!-- COLUMNA DERECHA: Controles -->
+            <div class="columna-derecha">
+                <div class="mesa-central">
+                    <div class="carta-grande carta-dorso" id="mazo-visual">MAZO</div>
+                    <div style="font-size: 2em;">⬇️</div>
+                    <div class="carta-grande carta-vacia" id="carta-activa">TU CARTA</div>
+                </div>
+
+                <div class="controles">
+                    <button id="btn-sacar" onclick="juego.jugarTurno()">Sacar Carta</button>
+                    <button id="btn-auto" onclick="juego.toggleAutoPlay()" style="background-color: #3498db; color: white;">▶ Auto</button>
+                    <button onclick="app.volverAlLobby()" style="background-color: #95a5a6; color: white;">🔙 Volver al Lobby</button>
+                </div>
+                <div id="log"></div>
+            </div>
         </div>
     </div>
 
-    <!-- COLUMNA DERECHA: Controles y Baraja -->
-    <div class="columna-derecha">
-        <div class="mesa-central">
-            <div class="carta-grande carta-dorso" id="mazo-visual">MAZO</div>
-            <div style="font-size: 2em;">⬇️</div>
-            <div class="carta-grande carta-vacia" id="carta-activa">TU CARTA</div>
+    <!-- MODAL RESULTADOS -->
+    <div id="modal-resultados" class="modal">
+        <div class="modal-content">
+            <h2 id="titulo-ganador">¡Ganador!</h2>
+            <div id="lista-ganancias"></div>
+            <button onclick="app.volverAlLobby()">Continuar</button>
         </div>
-
-        <div class="controles" style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
-            <button id="btn-sacar" onclick="jugarTurno()">Sacar Carta</button>
-            <button id="btn-auto" onclick="toggleAutoPlay()" style="background-color: #3498db; color: white;">▶ Simulación Automática</button>
-            <button onclick="reiniciarJuego()" style="background-color: #e74c3c; color: white;">Reiniciar</button>
-        </div>
-
-        <div id="log"></div>
     </div>
 
-</div>
-
-<script src="script.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>

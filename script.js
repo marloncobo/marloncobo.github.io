@@ -1,219 +1,367 @@
-// [MODELO DE DATOS] Definición de constantes y variables de estado
-const palos = ['Oros', 'Copas', 'Espadas', 'Bastos'];
-let mazo = [];          // Array para almacenar la baraja completa
-let pista = [];         // Array para las cartas de penalización
-let mazoRobo = [];      // Array (Pila) para robar cartas
-let posiciones = {};    // Objeto para rastrear la posición de cada caballo
-let cartasVolteadas = 0; // Contador de penalizaciones activadas
-let juegoTerminado = false; // Bandera de estado
-let intervaloAuto = null;   // Variable para controlar la automatización
+/* --- GESTIÓN DE LA APLICACIÓN (USUARIOS Y VISTAS) --- */
+const app = {
+    usuarioActual: null,
+    apuestas: [], // { nombre: "Juan", caballo: "Oros", cantidad: 100 }
 
-// INICIALIZACIÓN
-function inicializarDatos() {
-    detenerAutoPlay(); // [RESTRICCIÓN] Asegurar que no haya bucles corriendo
-
-    // Reiniciar restricciones y estados
-    posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
-    cartasVolteadas = 0;
-    juegoTerminado = false;
-    document.getElementById('btn-sacar').disabled = false;
-    document.getElementById('log').innerHTML = "<em>Juego iniciado. ¡Saca una carta!</em><br>";
-
-    // [ESTRUCTURA] Bucle anidado para generar la baraja
-    let cartasPermitidas = [1, 2, 3, 4, 5, 6, 7, 10, 12];
-    mazo = [];
-    for (let palo of palos) {
-        for (let num of cartasPermitidas) {
-            mazo.push({ palo: palo, numero: num });
-        }
-    }
-
-    // [ALGORITMO] Mezclar mazo (Fisher-Yates)
-    for (let i = mazo.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [mazo[i], mazo[j]] = [mazo[j], mazo[i]];
-    }
-
-    // [OPERADORES] Manipulación de Arrays (Splice)
-    pista = mazo.splice(0, 7); // Toma las primeras 7 para la pista
-    mazoRobo = mazo; // Quedan 29 para robar
-
-    // Reiniciar visuales de cartas
-    document.getElementById('mazo-visual').style.opacity = '1';
-    const cartaActiva = document.getElementById('carta-activa');
-    cartaActiva.className = "carta-grande carta-vacia";
-    cartaActiva.innerHTML = "TU CARTA";
-    cartaActiva.style.borderColor = "rgba(255,255,255,0.3)";
-    cartaActiva.style.color = "rgba(255,255,255,0.5)";
-
-    dibujarTablero();
-}
-
-// [LÓGICA] Función principal del turno
-function jugarTurno() {
-    if (juegoTerminado) return;
-
-    const btn = document.getElementById('btn-sacar');
-    btn.disabled = true;
-
-    // [RESTRICCIÓN] Validar que el mazo no esté vacío
-    if (mazoRobo.length === 0) {
-        logear("El mazo se quedó sin cartas. Empate técnico.");
-        juegoTerminado = true;
-        detenerAutoPlay();
-        return;
-    }
-
-    // 1. Sacar carta
-    let cartaSacada = mazoRobo.pop();
-    
-    // Actualizar visuales
-    if (mazoRobo.length === 0) document.getElementById('mazo-visual').style.opacity = '0.5';
-    mostrarCartaGrande(cartaSacada);
-
-    logear(`🎯 Salió el ${cartaSacada.numero} de ${cartaSacada.palo}. El caballo de ${cartaSacada.palo} avanza.`);
-
-    // [OPERADOR] Aritmético: Incremento
-    posiciones[cartaSacada.palo]++;
-    actualizarUI();
-
-    // [ESTRUCTURA] Condicional para verificar victoria
-    if (posiciones[cartaSacada.palo] >= 7) {
-        logear(`🏆 <strong>¡EL CABALLO DE ${cartaSacada.palo.toUpperCase()} HA GANADO LA CARRERA!</strong>`);
-        juegoTerminado = true;
-        detenerAutoPlay();
-        return;
-    }
-
-    // 3. Comprobar pista con retraso para permitir animación
-    setTimeout(() => {
-        verificarPista(btn);
-    }, 800);
-}
-
-function verificarPista(btn) {
-    // [LÓGICA] Comprobar condición de penalización (el último caballo cruzó la línea)
-    let posicionMinima = Math.min(...Object.values(posiciones));
-
-    if (posicionMinima > cartasVolteadas) {
-        let cartaPista = pista[cartasVolteadas];
-        logear(`⚠️ ¡Todos pasaron la línea ${cartasVolteadas + 1}! Se voltea carta de pista: ${cartaPista.numero} de ${cartaPista.palo}.`);
-
-        // Voltear carta (actualizar estado y UI)
-        cartasVolteadas++;
-        actualizarUI();
-
-        logear(`🛑 El caballo de ${cartaPista.palo} retrocede un espacio.`);
-
-        // Retraso para ver la carta antes de retroceder
-        setTimeout(() => {
-            // [OPERADOR] Decremento (Penalización)
-            posiciones[cartaPista.palo]--;
-            actualizarUI();
-            if(!intervaloAuto) btn.disabled = false; // Solo reactivar botón si no es automático
-        }, 1000);
-
-    } else {
-        // No se voltea carta, turno termina
-        if(!intervaloAuto) btn.disabled = false;
-    }
-}
-
-// [AUTOMATIZACIÓN] Función para simular la partida
-function toggleAutoPlay() {
-    const btnAuto = document.getElementById('btn-auto');
-    if (intervaloAuto) {
-        detenerAutoPlay();
-    } else {
-        if (juegoTerminado) reiniciarJuego();
-        btnAuto.innerHTML = "⏸ Pausar Simulación";
-        btnAuto.style.backgroundColor = "#e67e22";
-        // Ejecuta un turno cada 2 segundos para dar tiempo a las animaciones
-        intervaloAuto = setInterval(jugarTurno, 2000);
-    }
-}
-
-function detenerAutoPlay() {
-    clearInterval(intervaloAuto);
-    intervaloAuto = null;
-    const btnAuto = document.getElementById('btn-auto');
-    if(btnAuto) {
-        btnAuto.innerHTML = "▶ Simulación Automática";
-        btnAuto.style.backgroundColor = "#3498db";
-    }
-}
-
-// INTERFAZ DE USUARIO (Render)
-function dibujarTablero() {
-    const carrilesDiv = document.getElementById('carriles');
-    carrilesDiv.innerHTML = '';
-
-    palos.forEach((palo, index) => {
-        let carril = `<div class="carril">
-                <div class="nombre-palo" style="color: ${palo==='Oros'?'#f1c40f':(palo==='Copas'?'#e74c3c':(palo==='Espadas'?'#3498db':'#8e44ad'))}">${palo}</div>
-                <div class="casillas">`;
-        for(let i=0; i<=7; i++) {
-            carril += `<div class="casilla"></div>`;
-        }
-        // La ficha (Caballo)
-        carril += `<div class="caballo-ficha" id="ficha-${palo}" style="left: 0px;">🐎</div>
-                </div></div>`;
-        carrilesDiv.innerHTML += carril;
-    });
-
-    const pistaUI = document.getElementById('pista-ui');
-    pistaUI.innerHTML = '';
-    for(let i=0; i<7; i++) {
-        pistaUI.innerHTML += `<div class="carta-pista" id="pista-${i}">?</div>`;
-    }
-    actualizarUI();
-}
-
-function actualizarUI() {
-    // Actualizar caballos
-    palos.forEach(palo => {
-        const ficha = document.getElementById(`ficha-${palo}`);
-        // Cada casilla mide 40px + 4px borde = 44px. Gap 5px. Total 49px.
-        // +2px para centrar en el contenido (borde es 2px)
-        ficha.style.left = ((posiciones[palo] * 49) + 2) + 'px';
-    });
-
-    // Actualizar pista
-    for(let i=0; i<7; i++) {
-        const cartaUI = document.getElementById(`pista-${i}`);
-        if (i < cartasVolteadas) {
-            cartaUI.className = "carta-pista volteada";
-            cartaUI.innerHTML = `${pista[i].numero}<br>${pista[i].palo.substring(0,3)}`;
+    init: function() {
+        // Verificar si hay sesión guardada
+        const usuarioGuardado = localStorage.getItem('usuarioActual');
+        if (usuarioGuardado) {
+            this.usuarioActual = JSON.parse(usuarioGuardado);
+            this.mostrarVista('vista-lobby');
+            this.actualizarInfoUsuario();
         } else {
-            cartaUI.className = "carta-pista";
-            cartaUI.innerHTML = "?";
+            this.mostrarVista('vista-login');
         }
+    },
+
+    mostrarVista: function(idVista) {
+        document.querySelectorAll('.vista').forEach(v => v.classList.remove('activa'));
+        document.getElementById(idVista).classList.add('activa');
+    },
+
+    registrarUsuario: function() {
+        const nombre = document.getElementById('input-usuario').value.trim();
+        if (!nombre) return this.mostrarError("Ingresa un nombre válido.");
+
+        if (localStorage.getItem('user_' + nombre)) {
+            return this.mostrarError("El usuario ya existe. Intenta iniciar sesión.");
+        }
+
+        const nuevoUsuario = { nombre: nombre, puntos: 1000 };
+        localStorage.setItem('user_' + nombre, JSON.stringify(nuevoUsuario));
+        this.iniciarSesion(nombre);
+    },
+
+    iniciarSesion: function(nombreInput = null) {
+        const nombre = nombreInput || document.getElementById('input-usuario').value.trim();
+        if (!nombre) return this.mostrarError("Ingresa un nombre.");
+
+        const datosUsuario = localStorage.getItem('user_' + nombre);
+        if (!datosUsuario) return this.mostrarError("Usuario no encontrado. Regístrate primero.");
+
+        this.usuarioActual = JSON.parse(datosUsuario);
+        localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
+        
+        this.mostrarVista('vista-lobby');
+        this.actualizarInfoUsuario();
+        this.limpiarApuestas();
+    },
+
+    cerrarSesion: function() {
+        localStorage.removeItem('usuarioActual');
+        this.usuarioActual = null;
+        this.mostrarVista('vista-login');
+    },
+
+    actualizarInfoUsuario: function() {
+        if (!this.usuarioActual) return;
+        document.getElementById('lobby-usuario').innerText = this.usuarioActual.nombre;
+        document.getElementById('lobby-puntos').innerText = this.usuarioActual.puntos;
+        
+        // Guardar estado actualizado
+        localStorage.setItem('user_' + this.usuarioActual.nombre, JSON.stringify(this.usuarioActual));
+        localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
+    },
+
+    mostrarError: function(msg) {
+        document.getElementById('mensaje-login').innerText = msg;
+        setTimeout(() => document.getElementById('mensaje-login').innerText = "", 3000);
+    },
+
+    /* --- GESTIÓN DE APUESTAS --- */
+    agregarApuesta: function() {
+        if (this.apuestas.length >= 4) return alert("Máximo 4 jugadores por carrera.");
+
+        const nombre = document.getElementById('apuesta-nombre').value.trim();
+        const caballo = document.getElementById('apuesta-caballo').value;
+        const cantidad = parseInt(document.getElementById('apuesta-cantidad').value);
+
+        if (!nombre) return alert("Ingresa el nombre del jugador.");
+        if (!cantidad || cantidad < 100) return alert("La apuesta mínima es de 100 puntos.");
+        if (cantidad > this.usuarioActual.puntos) return alert("No tienes suficientes puntos.");
+
+        // Descontar puntos temporalmente (se devuelven si cancela o gana)
+        this.usuarioActual.puntos -= cantidad;
+        this.actualizarInfoUsuario();
+
+        this.apuestas.push({ nombre, caballo, cantidad });
+        this.renderizarListaApuestas();
+        
+        // Limpiar campos
+        document.getElementById('apuesta-nombre').value = "";
+        document.getElementById('apuesta-cantidad').value = "";
+    },
+
+    renderizarListaApuestas: function() {
+        const lista = document.getElementById('lista-apuestas');
+        lista.innerHTML = "";
+        this.apuestas.forEach((apuesta, index) => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <span><strong>${apuesta.nombre}</strong> apuesta ${apuesta.cantidad} a ${apuesta.caballo}</span>
+                <button onclick="app.eliminarApuesta(${index})" style="background:#e74c3c; color:white; border:none; padding:5px; border-radius:3px;">X</button>
+            `;
+            lista.appendChild(li);
+        });
+
+        document.getElementById('btn-iniciar-carrera').disabled = this.apuestas.length === 0;
+    },
+
+    eliminarApuesta: function(index) {
+        const apuesta = this.apuestas[index];
+        this.usuarioActual.puntos += apuesta.cantidad; // Devolver puntos
+        this.actualizarInfoUsuario();
+        
+        this.apuestas.splice(index, 1);
+        this.renderizarListaApuestas();
+    },
+
+    limpiarApuestas: function() {
+        this.apuestas = [];
+        this.renderizarListaApuestas();
+    },
+
+    irALaCarrera: function() {
+        if (this.apuestas.length === 0) return;
+        this.mostrarVista('vista-juego');
+        juego.inicializarDatos();
+    },
+
+    volverAlLobby: function() {
+        document.getElementById('modal-resultados').style.display = "none";
+        this.mostrarVista('vista-lobby');
+        this.limpiarApuestas(); // Reiniciar apuestas para la siguiente ronda
+    },
+
+    /* --- TIENDA DE PUNTOS --- */
+    comprarPuntos: function(cantidad) {
+        if (confirm(`¿Deseas comprar ${cantidad} puntos?`)) {
+            this.usuarioActual.puntos += cantidad;
+            this.actualizarInfoUsuario();
+            alert(`¡Has comprado ${cantidad} puntos!`);
+        }
+    },
+
+    procesarResultados: function(caballoGanador) {
+        const modal = document.getElementById('modal-resultados');
+        const lista = document.getElementById('lista-ganancias');
+        const titulo = document.getElementById('titulo-ganador');
+        
+        titulo.innerHTML = `🏆 ¡Gana ${caballoGanador}!`;
+        lista.innerHTML = "";
+
+        this.apuestas.forEach(apuesta => {
+            const div = document.createElement('div');
+            if (apuesta.caballo === caballoGanador) {
+                const ganancia = apuesta.cantidad * 5;
+                this.usuarioActual.puntos += ganancia;
+                div.className = "ganador";
+                div.innerHTML = `🎉 <strong>${apuesta.nombre}</strong> ganó ${ganancia} puntos!`;
+            } else {
+                div.className = "perdedor";
+                div.innerHTML = `❌ <strong>${apuesta.nombre}</strong> perdió ${apuesta.cantidad} puntos.`;
+            }
+            lista.appendChild(div);
+        });
+
+        this.actualizarInfoUsuario();
+        modal.style.display = "block";
     }
-}
+};
 
-function mostrarCartaGrande(carta) {
-    const el = document.getElementById('carta-activa');
-    el.className = "carta-grande";
-    
-    let color = '#333';
-    if(carta.palo === 'Oros') color = '#f1c40f';
-    else if(carta.palo === 'Copas') color = '#e74c3c';
-    else if(carta.palo === 'Espadas') color = '#3498db';
-    else if(carta.palo === 'Bastos') color = '#8e44ad';
+/* --- LÓGICA DEL JUEGO (ADAPTADA) --- */
+const juego = {
+    palos: ['Oros', 'Copas', 'Espadas', 'Bastos'],
+    mazo: [],
+    pista: [],
+    mazoRobo: [],
+    posiciones: {},
+    cartasVolteadas: 0,
+    juegoTerminado: false,
+    intervaloAuto: null,
 
-    el.style.color = color;
-    el.style.borderColor = color;
-    el.innerHTML = `<span class="numero-carta">${carta.numero}</span><span class="palo-carta">${carta.palo}</span>`;
-}
+    inicializarDatos: function() {
+        this.detenerAutoPlay();
+        this.posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
+        this.cartasVolteadas = 0;
+        this.juegoTerminado = false;
+        
+        document.getElementById('btn-sacar').disabled = false;
+        document.getElementById('log').innerHTML = "<em>Carrera iniciada. ¡Buena suerte!</em><br>";
 
-function logear(mensaje) {
-    const logBox = document.getElementById('log');
-    logBox.innerHTML = mensaje + "<br>" + logBox.innerHTML;
-}
+        // Crear y mezclar baraja
+        let cartasPermitidas = [1, 2, 3, 4, 5, 6, 7, 10, 12];
+        this.mazo = [];
+        for (let palo of this.palos) {
+            for (let num of cartasPermitidas) {
+                this.mazo.push({ palo: palo, numero: num });
+            }
+        }
 
-function reiniciarJuego() {
-    inicializarDatos();
-}
+        for (let i = this.mazo.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.mazo[i], this.mazo[j]] = [this.mazo[j], this.mazo[i]];
+        }
 
-// Arrancar juego al cargar
-window.onload = inicializarDatos;
+        this.pista = this.mazo.splice(0, 7);
+        this.mazoRobo = this.mazo;
+
+        // Reset UI
+        document.getElementById('mazo-visual').style.opacity = '1';
+        const cartaActiva = document.getElementById('carta-activa');
+        cartaActiva.className = "carta-grande carta-vacia";
+        cartaActiva.innerHTML = "TU CARTA";
+        cartaActiva.style.borderColor = "rgba(255,255,255,0.3)";
+        cartaActiva.style.color = "rgba(255,255,255,0.5)";
+
+        this.dibujarTablero();
+    },
+
+    jugarTurno: function() {
+        if (this.juegoTerminado) return;
+
+        const btn = document.getElementById('btn-sacar');
+        btn.disabled = true;
+
+        if (this.mazoRobo.length === 0) {
+            this.logear("El mazo se quedó sin cartas. Empate técnico.");
+            this.juegoTerminado = true;
+            this.detenerAutoPlay();
+            return;
+        }
+
+        let cartaSacada = this.mazoRobo.pop();
+        if (this.mazoRobo.length === 0) document.getElementById('mazo-visual').style.opacity = '0.5';
+        this.mostrarCartaGrande(cartaSacada);
+
+        this.logear(`🎯 Salió el ${cartaSacada.numero} de ${cartaSacada.palo}.`);
+        this.posiciones[cartaSacada.palo]++;
+        this.actualizarUI();
+
+        if (this.posiciones[cartaSacada.palo] >= 7) {
+            this.logear(`🏆 <strong>¡GANÓ ${cartaSacada.palo.toUpperCase()}!</strong>`);
+            this.juegoTerminado = true;
+            this.detenerAutoPlay();
+            setTimeout(() => app.procesarResultados(cartaSacada.palo), 1500);
+            return;
+        }
+
+        setTimeout(() => {
+            this.verificarPista(btn);
+        }, 800);
+    },
+
+    verificarPista: function(btn) {
+        let posicionMinima = Math.min(...Object.values(this.posiciones));
+
+        if (posicionMinima > this.cartasVolteadas) {
+            let cartaPista = this.pista[this.cartasVolteadas];
+            this.logear(`⚠️ ¡Todos pasaron! Se voltea: ${cartaPista.numero} de ${cartaPista.palo}.`);
+            
+            this.cartasVolteadas++;
+            this.actualizarUI();
+
+            this.logear(`🛑 ${cartaPista.palo} retrocede.`);
+
+            setTimeout(() => {
+                this.posiciones[cartaPista.palo]--;
+                this.actualizarUI();
+                if(!this.intervaloAuto) btn.disabled = false;
+            }, 1000);
+
+        } else {
+            if(!this.intervaloAuto) btn.disabled = false;
+        }
+    },
+
+    toggleAutoPlay: function() {
+        const btnAuto = document.getElementById('btn-auto');
+        if (this.intervaloAuto) {
+            this.detenerAutoPlay();
+        } else {
+            if (this.juegoTerminado) return;
+            btnAuto.innerHTML = "⏸ Pausar";
+            btnAuto.style.backgroundColor = "#e67e22";
+            this.intervaloAuto = setInterval(() => this.jugarTurno(), 2000);
+        }
+    },
+
+    detenerAutoPlay: function() {
+        clearInterval(this.intervaloAuto);
+        this.intervaloAuto = null;
+        const btnAuto = document.getElementById('btn-auto');
+        if(btnAuto) {
+            btnAuto.innerHTML = "▶ Auto";
+            btnAuto.style.backgroundColor = "#3498db";
+        }
+    },
+
+    dibujarTablero: function() {
+        const carrilesDiv = document.getElementById('carriles');
+        carrilesDiv.innerHTML = '';
+
+        this.palos.forEach((palo) => {
+            let carril = `<div class="carril">
+                    <div class="nombre-palo" style="color: ${this.getColorPalo(palo)}">${palo}</div>
+                    <div class="casillas">`;
+            for(let i=0; i<=7; i++) {
+                carril += `<div class="casilla"></div>`;
+            }
+            carril += `<div class="caballo-ficha" id="ficha-${palo}" style="left: 0px;">🐎</div>
+                    </div></div>`;
+            carrilesDiv.innerHTML += carril;
+        });
+
+        const pistaUI = document.getElementById('pista-ui');
+        pistaUI.innerHTML = '';
+        for(let i=0; i<7; i++) {
+            pistaUI.innerHTML += `<div class="carta-pista" id="pista-${i}">?</div>`;
+        }
+        this.actualizarUI();
+    },
+
+    actualizarUI: function() {
+        this.palos.forEach(palo => {
+            const ficha = document.getElementById(`ficha-${palo}`);
+            ficha.style.left = ((this.posiciones[palo] * 49) + 2) + 'px';
+        });
+
+        for(let i=0; i<7; i++) {
+            const cartaUI = document.getElementById(`pista-${i}`);
+            if (i < this.cartasVolteadas) {
+                cartaUI.className = "carta-pista volteada";
+                cartaUI.innerHTML = `${this.pista[i].numero}<br>${this.pista[i].palo.substring(0,3)}`;
+            } else {
+                cartaUI.className = "carta-pista";
+                cartaUI.innerHTML = "?";
+            }
+        }
+    },
+
+    mostrarCartaGrande: function(carta) {
+        const el = document.getElementById('carta-activa');
+        el.className = "carta-grande";
+        let color = this.getColorPalo(carta.palo);
+        el.style.color = color;
+        el.style.borderColor = color;
+        el.innerHTML = `<span class="numero-carta">${carta.numero}</span><span class="palo-carta">${carta.palo}</span>`;
+    },
+
+    getColorPalo: function(palo) {
+        if(palo === 'Oros') return '#f1c40f';
+        if(palo === 'Copas') return '#e74c3c';
+        if(palo === 'Espadas') return '#3498db';
+        return '#8e44ad';
+    },
+
+    logear: function(mensaje) {
+        const logBox = document.getElementById('log');
+        logBox.innerHTML = mensaje + "<br>" + logBox.innerHTML;
+    }
+};
+
+// Inicializar aplicación al cargar
+window.onload = function() {
+    app.init();
+};
