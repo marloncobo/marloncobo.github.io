@@ -1,4 +1,4 @@
-const socket = io(); // Conectar al servidor WebSocket
+const socket = io('https://marloncobogithubio-production.up.railway.app'); // Conectar al servidor WebSocket
 
 /* --- GESTIÓN DE LA APLICACIÓN (USUARIOS Y VISTAS) --- */
 const app = {
