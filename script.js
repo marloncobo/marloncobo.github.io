@@ -1,6 +1,6 @@
 // URL de tu servidor en Railway (SIN la barra al final)
 // Ejemplo: const BACKEND_URL = 'https://carreras-caballo-production.up.railway.app';
-const BACKEND_URL = 'https://TU-PROYECTO.up.railway.app'; // <--- PON AQUÍ TU DOMINIO DE RAILWAY (HTTPS)
+const BACKEND_URL = 'https://marloncobogithubio-production.up.railway.app'; // <--- PON AQUÍ TU DOMINIO DE RAILWAY (HTTPS)
 
 const socket = io(BACKEND_URL); // Conectar al servidor WebSocket remoto
 
