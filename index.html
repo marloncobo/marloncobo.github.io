@@ -22,13 +22,43 @@
         </div>
     </div>
 
-    <!-- VISTA 2: LOBBY (APUESTAS Y TIENDA) -->
+    <!-- VISTA 1.5: SELECCIÓN DE SALAS -->
+    <div id="vista-salas" class="vista">
+        <header>
+            <div class="usuario-info">
+                👤 <span id="menu-usuario">Usuario</span> | 💰 <span id="menu-puntos">0</span> pts
+            </div>
+            <button onclick="app.cerrarSesion()" class="btn-pequeno">Salir</button>
+        </header>
+
+        <h1>Selecciona una Sala</h1>
+
+        <div class="panel-central">
+            <div class="card" style="max-width: 400px; margin: 0 auto;">
+                <h3>🏠 Crear Nueva Sala</h3>
+                <p>Crea una sala privada y comparte el código con tus amigos.</p>
+                <button onclick="app.crearSala()" class="btn-grande" style="background-color: #3498db;">Crear Sala</button>
+
+                <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.2); margin: 20px 0;">
+
+                <h3>🔑 Unirse a Sala</h3>
+                <p>Ingresa el código de la sala:</p>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="input-codigo-sala" placeholder="Código (ej. AB12)" style="text-transform: uppercase;">
+                    <button onclick="app.unirseSala()">Entrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- VISTA 2: LOBBY DE LA SALA -->
     <div id="vista-lobby" class="vista">
         <header>
             <div class="usuario-info">
+                🏠 Sala: <span id="sala-codigo" style="color: #f1c40f;">---</span> |
                 👤 <span id="lobby-usuario">Invitado</span> | 💰 <span id="lobby-puntos">0</span> pts
             </div>
-            <button onclick="app.cerrarSesion()" class="btn-pequeno">Salir</button>
+            <button onclick="app.salirDeSala()" class="btn-pequeno">Salir de Sala</button>
         </header>
 
         <h1>Zona de Apuestas</h1>
@@ -40,7 +70,9 @@
                 <p>Máximo 4 jugadores por carrera.</p>
 
                 <div class="form-apuesta">
-                    <input type="text" id="apuesta-nombre" placeholder="Nombre del Jugador">
+                    <!-- El nombre se toma del usuario logueado automáticamente o se muestra solo -->
+                    <div style="padding: 10px; font-weight: bold;">Apuestas como: <span id="nombre-apostador">Yo</span></div>
+
                     <select id="apuesta-caballo">
                         <option value="Oros">🟡 Oros</option>
                         <option value="Copas">🔴 Copas</option>
@@ -48,7 +80,7 @@
                         <option value="Bastos">🟢 Bastos</option>
                     </select>
                     <input type="number" id="apuesta-cantidad" placeholder="Cantidad (ej. 100)" min="100">
-                    <button onclick="app.agregarApuesta()">Añadir Jugador</button>
+                    <button onclick="app.agregarApuesta()">Apostar</button>
                 </div>
 
                 <ul id="lista-apuestas" class="lista-apuestas">
@@ -99,7 +131,8 @@
 
                 <div class="controles">
                     <button id="btn-sacar" onclick="juego.jugarTurno()">Sacar Carta</button>
-                    <button id="btn-auto" onclick="juego.toggleAutoPlay()" style="background-color: #3498db; color: white;">▶ Auto</button>
+                    <!-- Quitamos auto play global para evitar caos en multi-sala por ahora, o lo dejamos local -->
+                    <!-- <button id="btn-auto" onclick="juego.toggleAutoPlay()" style="background-color: #3498db; color: white;">▶ Auto</button> -->
                     <button onclick="app.volverAlLobby()" style="background-color: #95a5a6; color: white;">🔙 Volver al Lobby</button>
                 </div>
                 <div id="log"></div>
@@ -116,7 +149,7 @@
         </div>
     </div>
 
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

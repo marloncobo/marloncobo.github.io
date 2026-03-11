@@ -1,77 +1,71 @@
-require('dotenv').config(); // Cargar variables de entorno desde .env
+require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mysql = require('mysql2/promise');
+const mysql = require('mysql2/promise'); // Usamos la versión con promesas
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
-        origin: "*", // Permitir conexiones desde cualquier lugar
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 const port = process.env.PORT || 3000;
 
-// --- MIDDLEWARE ---
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
-// --- CONFIGURACIÓN BASE DE DATOS ---
-// Prioridad: 1. MYSQL_PUBLIC_URL (Para desarrollo local desde tu PC)
-//            2. MYSQL_URL (Variable automática interna de Railway en producción)
-const connectionUrl = process.env.MYSQL_PUBLIC_URL || process.env.MYSQL_URL;
-
-if (!connectionUrl) {
-    console.error("❌ Error: No se encontró la variable de entorno MYSQL_URL o MYSQL_PUBLIC_URL.");
-    console.error("Asegúrate de crear un archivo .env con las credenciales o configurar las variables en Railway.");
-    process.exit(1);
-}
-
-if (!connectionUrl.startsWith('mysql://')) {
-    console.error("❌ Error de Formato: La URL de conexión no es válida.");
-    console.error("   Parece que solo has copiado el 'Host' en lugar de la URL completa.");
-    console.error(`   Valor actual: ${connectionUrl}`);
-    console.error("   👉 Solución: En Railway, copia la 'Connection URL' completa (empieza por mysql://).");
-    process.exit(1);
-}
-
-// --- DIAGNÓSTICO DE CONEXIÓN ---
-try {
-    // Ocultamos la contraseña para mostrar el log seguro
-    const urlSegura = connectionUrl.replace(/:([^:@]+)@/, ':****@');
-    console.log(`🔌 Intentando conectar a: ${urlSegura}`);
-    
-    const urlObj = new URL(connectionUrl);
-    if (urlObj.hostname === 'localhost' && !process.env.MYSQL_PUBLIC_URL.includes('localhost')) {
-        console.warn("⚠️  ALERTA: Tu URL se está interpretando como 'localhost'. Probablemente tienes caracteres especiales en tu contraseña que rompen el formato.");
-    }
-} catch (e) {
-    console.log("⚠️  Error: La cadena de conexión no es una URL válida.");
-}
+// --- CONFIGURACIÓN DE LA BASE DE DATOS (POOL) ---
+const connectionUrl = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL;
 
 let db;
 
-// --- ESTADO DEL JUEGO ---
-let estadoJuego = {
-    enCarrera: false,
-    apuestas: [],
-    posiciones: { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 },
-    cartasVolteadas: 0,
-    pista: [],
-    mazo: [],
-    mazoRobo: [],
-    ganador: null
-};
+if (connectionUrl) {
+    // ⚠️ CAMBIO IMPORTANTE: Usamos createPool en lugar de createConnection
+    // El Pool maneja automáticamente la reconexión si la base de datos cierra el grifo.
+    db = mysql.createPool({
+        uri: connectionUrl, // Funciona en versiones recientes de mysql2
+        waitForConnections: true, // Si no hay conexiones libres, espera
+        connectionLimit: 5,       // Máximo 5 conexiones simultáneas (suficiente para este uso)
+        queueLimit: 0,
+        enableKeepAlive: true,    // Mantiene viva la conexión para evitar timeouts de Railway
+        keepAliveInitialDelay: 0
+    });
+    
+    // Si la propiedad 'uri' no es soportada por tu versión específica de driver, 
+    // mysql2 suele ser inteligente y permitir pasar el string directamente al constructor:
+    // db = mysql.createPool(connectionUrl); 
+    // Pero la configuración de objeto arriba es más robusta si se soporta.
+} else {
+    console.error("❌ No se encontró URL de base de datos. Configura el archivo .env");
+}
 
-// --- FUNCIONES DEL JUEGO ---
-function inicializarJuego() {
+// --- GESTIÓN DE SALAS ---
+const rooms = new Map();
+
+function generarCodigoSala() {
+    return Math.random().toString(36).substring(2, 6).toUpperCase();
+}
+
+function crearEstadoInicial() {
+    return {
+        enCarrera: false,
+        apuestas: [], 
+        posiciones: { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 },
+        cartasVolteadas: 0,
+        pista: [],
+        mazo: [],
+        mazoRobo: [],
+        ganador: null,
+        jugadores: [] 
+    };
+}
+
+function inicializarJuegoEnSala(estado) {
     const palos = ['Oros', 'Copas', 'Espadas', 'Bastos'];
     let cartasPermitidas = [1, 2, 3, 4, 5, 6, 7, 10, 12];
     let mazo = [];
@@ -87,64 +81,90 @@ function inicializarJuego() {
         [mazo[i], mazo[j]] = [mazo[j], mazo[i]];
     }
 
-    estadoJuego.pista = mazo.splice(0, 7);
-    estadoJuego.mazoRobo = mazo;
-    estadoJuego.posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
-    estadoJuego.cartasVolteadas = 0;
-    estadoJuego.enCarrera = true;
-    estadoJuego.ganador = null;
-}
-
-// --- LÓGICA AUXILIAR (Movida fuera del socket) ---
-function verificarPista() {
-    let minPos = Math.min(...Object.values(estadoJuego.posiciones));
-    if (minPos > estadoJuego.cartasVolteadas) {
-        const cartaPista = estadoJuego.pista[estadoJuego.cartasVolteadas];
-        estadoJuego.cartasVolteadas++;
-        
-        io.emit('cartaPistaVolteada', { 
-            carta: cartaPista, 
-            indice: estadoJuego.cartasVolteadas - 1 
-        });
-
-        setTimeout(() => {
-            estadoJuego.posiciones[cartaPista.palo]--;
-            io.emit('retrocesoCaballo', { 
-                palo: cartaPista.palo, 
-                posiciones: estadoJuego.posiciones 
-            });
-        }, 1500);
-    }
-}
-
-async function procesarPremios(ganador) {
-    for (const apuesta of estadoJuego.apuestas) {
-        if (apuesta.caballo === ganador) {
-            const premio = apuesta.cantidad * 5;
-            await db.query('UPDATE usuarios SET puntos = puntos + ?, victorias = victorias + 1 WHERE nombre = ?', [premio, apuesta.nombre]);
-        }
-        await db.query('UPDATE usuarios SET partidas_jugadas = partidas_jugadas + 1 WHERE nombre = ?', [apuesta.nombre]);
-    }
-    io.emit('actualizarSaldos');
+    estado.pista = mazo.splice(0, 7);
+    estado.mazoRobo = mazo;
+    estado.posiciones = { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 };
+    estado.cartasVolteadas = 0;
+    estado.enCarrera = true;
+    estado.ganador = null;
 }
 
 // --- SOCKET.IO ---
 io.on('connection', (socket) => {
     console.log('Usuario conectado:', socket.id);
-    socket.emit('estadoActual', estadoJuego);
+    let salaActual = null;
+    let nombreUsuario = null;
 
     socket.on('usuarioConectado', (usuario) => {
-        io.emit('notificacion', `${usuario.nombre} se ha unido.`);
+        nombreUsuario = usuario.nombre;
+    });
+
+    socket.on('crearSala', () => {
+        const codigo = generarCodigoSala();
+        const nuevoEstado = crearEstadoInicial();
+        rooms.set(codigo, nuevoEstado);
+        
+        socket.join(codigo);
+        salaActual = codigo;
+        
+        nuevoEstado.jugadores.push(nombreUsuario);
+
+        socket.emit('salaCreada', { codigo, estado: nuevoEstado });
+        console.log(`Sala creada: ${codigo} por ${nombreUsuario}`);
+    });
+
+    socket.on('unirseSala', (codigo) => {
+        codigo = codigo.toUpperCase();
+        if (!rooms.has(codigo)) {
+            socket.emit('error', 'La sala no existe.');
+            return;
+        }
+
+        const estado = rooms.get(codigo);
+        if (estado.enCarrera) {
+            socket.emit('error', 'La carrera ya empezó.');
+            return;
+        }
+
+        socket.join(codigo);
+        salaActual = codigo;
+        
+        if (!estado.jugadores.includes(nombreUsuario)) {
+            estado.jugadores.push(nombreUsuario);
+        }
+
+        socket.emit('unidoASala', { codigo, estado });
+        io.to(codigo).emit('notificacion', `${nombreUsuario} se ha unido a la sala.`);
+    });
+
+    socket.on('salirDeSala', () => {
+        if (salaActual && rooms.has(salaActual)) {
+            const estado = rooms.get(salaActual);
+            socket.leave(salaActual);
+            estado.jugadores = estado.jugadores.filter(n => n !== nombreUsuario);
+            io.to(salaActual).emit('notificacion', `${nombreUsuario} salió de la sala.`);
+            if (estado.jugadores.length === 0) rooms.delete(salaActual);
+            salaActual = null;
+        }
     });
 
     socket.on('realizarApuesta', async (apuesta) => {
-        if (estadoJuego.enCarrera) return;
-        if (estadoJuego.apuestas.length >= 4) {
+        if (!salaActual || !rooms.has(salaActual)) return;
+        const estado = rooms.get(salaActual);
+
+        if (estado.enCarrera) return;
+        if (estado.apuestas.length >= 4) {
             socket.emit('error', 'Mesa llena.');
             return;
         }
 
+        if (estado.apuestas.some(a => a.nombre === apuesta.nombre)) {
+            socket.emit('error', 'Ya has realizado una apuesta.');
+            return;
+        }
+
         try {
+            // db.query funciona igual con Pool que con Connection
             const [rows] = await db.query('SELECT puntos FROM usuarios WHERE nombre = ?', [apuesta.nombre]);
             if (rows.length === 0 || rows[0].puntos < apuesta.cantidad) {
                 socket.emit('error', 'Saldo insuficiente.');
@@ -153,53 +173,84 @@ io.on('connection', (socket) => {
 
             await db.query('UPDATE usuarios SET puntos = puntos - ? WHERE nombre = ?', [apuesta.cantidad, apuesta.nombre]);
             
-            estadoJuego.apuestas.push(apuesta);
-            io.emit('actualizarApuestas', estadoJuego.apuestas);
+            estado.apuestas.push(apuesta);
+            io.to(salaActual).emit('actualizarApuestas', estado.apuestas);
             
             const [user] = await db.query('SELECT * FROM usuarios WHERE nombre = ?', [apuesta.nombre]);
             socket.emit('actualizarUsuario', user[0]);
 
-        } catch (err) {
-            console.error(err);
-        }
+        } catch (err) { console.error('Error DB apuesta:', err); }
     });
 
     socket.on('iniciarCarrera', () => {
-        if (estadoJuego.apuestas.length === 0) return;
-        inicializarJuego();
-        io.emit('inicioCarrera', estadoJuego);
+        if (!salaActual || !rooms.has(salaActual)) return;
+        const estado = rooms.get(salaActual);
+        if (estado.apuestas.length === 0) return;
+        inicializarJuegoEnSala(estado);
+        io.to(salaActual).emit('inicioCarrera', estado);
     });
 
     socket.on('sacarCarta', async () => {
-        if (!estadoJuego.enCarrera || estadoJuego.ganador) return;
+        if (!salaActual || !rooms.has(salaActual)) return;
+        const estado = rooms.get(salaActual);
+        if (!estado.enCarrera || estado.ganador) return;
 
-        if (estadoJuego.mazoRobo.length === 0) {
-            io.emit('finCarrera', { ganador: null, motivo: 'Empate' });
-            estadoJuego.enCarrera = false;
+        if (estado.mazoRobo.length === 0) {
+            io.to(salaActual).emit('finCarrera', { ganador: null, motivo: 'Empate' });
+            estado.enCarrera = false;
             return;
         }
 
-        const carta = estadoJuego.mazoRobo.pop();
-        estadoJuego.posiciones[carta.palo]++;
-        
-        io.emit('cartaSacada', { carta, posiciones: estadoJuego.posiciones });
+        const carta = estado.mazoRobo.pop();
+        estado.posiciones[carta.palo]++;
+        io.to(salaActual).emit('cartaSacada', { carta, posiciones: estado.posiciones });
 
-        if (estadoJuego.posiciones[carta.palo] >= 7) {
-            estadoJuego.ganador = carta.palo;
-            estadoJuego.enCarrera = false;
-            
-            await procesarPremios(carta.palo);
-            
-            io.emit('finCarrera', { ganador: carta.palo, motivo: 'Meta' });
-            
+        if (estado.posiciones[carta.palo] >= 7) {
+            estado.ganador = carta.palo;
+            estado.enCarrera = false;
+            await procesarPremios(salaActual, carta.palo);
+            io.to(salaActual).emit('finCarrera', { ganador: carta.palo, motivo: 'Meta' });
             setTimeout(() => {
-                estadoJuego.apuestas = [];
-                io.emit('actualizarApuestas', []);
+                estado.apuestas = [];
+                io.to(salaActual).emit('actualizarApuestas', []);
             }, 5000);
         } else {
-            verificarPista();
+            verificarPista(salaActual);
         }
     });
+
+    function verificarPista(codigoSala) {
+        const estado = rooms.get(codigoSala);
+        let minPos = Math.min(...Object.values(estado.posiciones));
+        
+        if (minPos > estado.cartasVolteadas) {
+            const cartaPista = estado.pista[estado.cartasVolteadas];
+            estado.cartasVolteadas++;
+            io.to(codigoSala).emit('cartaPistaVolteada', { 
+                carta: cartaPista, 
+                indice: estado.cartasVolteadas - 1 
+            });
+            setTimeout(() => {
+                estado.posiciones[cartaPista.palo]--;
+                io.to(codigoSala).emit('retrocesoCaballo', { 
+                    palo: cartaPista.palo, 
+                    posiciones: estado.posiciones 
+                });
+            }, 1500);
+        }
+    }
+
+    async function procesarPremios(codigoSala, ganador) {
+        const estado = rooms.get(codigoSala);
+        for (const apuesta of estado.apuestas) {
+            if (apuesta.caballo === ganador) {
+                const premio = apuesta.cantidad * 5;
+                await db.query('UPDATE usuarios SET puntos = puntos + ?, victorias = victorias + 1 WHERE nombre = ?', [premio, apuesta.nombre]);
+            }
+            await db.query('UPDATE usuarios SET partidas_jugadas = partidas_jugadas + 1 WHERE nombre = ?', [apuesta.nombre]);
+        }
+        io.to(codigoSala).emit('actualizarSaldos');
+    }
 });
 
 // --- RUTAS API ---
@@ -212,7 +263,10 @@ app.post('/api/registrar', async (req, res) => {
         await db.query('INSERT INTO usuarios (nombre) VALUES (?)', [nombre]);
         const [user] = await db.query('SELECT * FROM usuarios WHERE nombre = ?', [nombre]);
         res.json(user[0]);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ error: 'Error interno o de conexión a BD' }); 
+    }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -221,7 +275,10 @@ app.post('/api/login', async (req, res) => {
         const [user] = await db.query('SELECT * FROM usuarios WHERE nombre = ?', [nombre]);
         if (user.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
         res.json(user[0]);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ error: 'Error interno o de conexión a BD' }); 
+    }
 });
 
 app.post('/api/comprar-puntos', async (req, res) => {
@@ -230,36 +287,35 @@ app.post('/api/comprar-puntos', async (req, res) => {
         await db.query('UPDATE usuarios SET puntos = puntos + ? WHERE nombre = ?', [cantidad, nombre]);
         const [user] = await db.query('SELECT * FROM usuarios WHERE nombre = ?', [nombre]);
         res.json(user[0]);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.error(e);
+        res.status(500).json({ error: 'Error interno' }); 
+    }
 });
 
-// --- INICIO ---
 async function start() {
     try {
-        // Conexión usando la URL completa (Railway style)
-        db = await mysql.createConnection(connectionUrl);
-        console.log('✅ Conectado a MySQL Railway');
-        
-        // Crear tabla si no existe (útil para el primer despliegue)
-        await db.query(`
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                nombre VARCHAR(50) UNIQUE NOT NULL,
-                puntos INT DEFAULT 1000,
-                partidas_jugadas INT DEFAULT 0,
-                victorias INT DEFAULT 0,
-                fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Tabla usuarios verificada');
+        if(db) {
+            // Verificamos conexión simple
+            console.log('🔌 Intentando conectar al Pool de MySQL...');
+            await db.query('SELECT 1'); 
+            console.log('✅ Conexión al Pool establecida correctamente.');
 
-        server.listen(port, () => console.log(`🚀 Server en puerto ${port}`));
-    } catch (e) {
-        console.error('❌ Error DB:', e.message);
-        if (e.code === 'ENOTFOUND' && e.message.includes('railway.internal')) {
-            console.log('\n⚠️  AVISO: Estás intentando conectar a una URL interna de Railway desde tu PC.');
-            console.log('   Asegúrate de definir MYSQL_PUBLIC_URL en tu archivo .env con la "Public Networking URL" de Railway.\n');
+             await db.query(`
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre VARCHAR(50) UNIQUE NOT NULL,
+                    puntos INT DEFAULT 1000,
+                    partidas_jugadas INT DEFAULT 0,
+                    victorias INT DEFAULT 0,
+                    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            console.log('✅ Tabla usuarios verificada.');
+        } else {
+            console.log("⚠️ Modo Offline (Sin base de datos configurada).");
         }
-    }
+        server.listen(port, () => console.log(`🚀 Server en puerto ${port}`));
+    } catch (e) { console.error('❌ Error Fatal al iniciar:', e); }
 }
 start();

@@ -1,21 +1,18 @@
-// URL de tu servidor en Railway (SIN la barra al final)
-// Ejemplo: const BACKEND_URL = 'https://carreras-caballo-production.up.railway.app';
-const BACKEND_URL = 'https://marloncobogithubio-production.up.railway.app'; // <--- PON AQUÍ TU DOMINIO DE RAILWAY (HTTPS)
-
-const socket = io(BACKEND_URL); // Conectar al servidor WebSocket remoto
+const socket = io(); // Conectar al servidor WebSocket
 
 /* --- GESTIÓN DE LA APLICACIÓN (USUARIOS Y VISTAS) --- */
 const app = {
     usuarioActual: null,
-    apuestas: [], // { nombre: "Juan", caballo: "Oros", cantidad: 100 }
+    salaActual: null,
+    apuestas: [],
 
     init: function() {
-        // Verificar si hay sesión guardada (solo para mantener la vista, los datos reales vienen del servidor)
+        // Verificar si hay sesión guardada
         const usuarioGuardado = localStorage.getItem('usuarioActual');
         if (usuarioGuardado) {
             this.usuarioActual = JSON.parse(usuarioGuardado);
-            this.mostrarVista('vista-lobby');
             this.actualizarInfoUsuario();
+            this.mostrarVista('vista-salas'); // Ir a menú de salas, no directo al lobby
             socket.emit('usuarioConectado', this.usuarioActual);
         } else {
             this.mostrarVista('vista-login');
@@ -27,12 +24,13 @@ const app = {
         document.getElementById(idVista).classList.add('activa');
     },
 
+    // --- LOGIN / REGISTRO ---
     registrarUsuario: async function() {
         const nombre = document.getElementById('input-usuario').value.trim();
         if (!nombre) return this.mostrarError("Ingresa un nombre válido.");
 
         try {
-            const response = await fetch(`${BACKEND_URL}/api/registrar`, {
+            const response = await fetch('/api/registrar', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre })
@@ -56,7 +54,7 @@ const app = {
         if (!nombre) return this.mostrarError("Ingresa un nombre.");
 
         try {
-            const response = await fetch(`${BACKEND_URL}/api/login`, {
+            const response = await fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre })
@@ -70,8 +68,8 @@ const app = {
             this.usuarioActual = await response.json();
             localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
             
-            this.mostrarVista('vista-lobby');
             this.actualizarInfoUsuario();
+            this.mostrarVista('vista-salas');
             socket.emit('usuarioConectado', this.usuarioActual);
 
         } catch (error) {
@@ -87,51 +85,97 @@ const app = {
 
     actualizarInfoUsuario: function() {
         if (!this.usuarioActual) return;
-        document.getElementById('lobby-usuario').innerText = this.usuarioActual.nombre;
-        document.getElementById('lobby-puntos').innerText = this.usuarioActual.puntos;
+        // Actualizar en todas las vistas donde aparece info del usuario
+        const elementosNombre = ['menu-usuario', 'lobby-usuario', 'nombre-apostador'];
+        const elementosPuntos = ['menu-puntos', 'lobby-puntos'];
+
+        elementosNombre.forEach(id => {
+            const el = document.getElementById(id);
+            if(el) el.innerText = this.usuarioActual.nombre;
+        });
+
+        elementosPuntos.forEach(id => {
+            const el = document.getElementById(id);
+            if(el) el.innerText = this.usuarioActual.puntos;
+        });
     },
 
     mostrarError: function(msg) {
-        document.getElementById('mensaje-login').innerText = msg;
-        setTimeout(() => document.getElementById('mensaje-login').innerText = "", 3000);
+        const el = document.getElementById('mensaje-login');
+        if(el) {
+            el.innerText = msg;
+            setTimeout(() => el.innerText = "", 3000);
+        } else {
+            alert(msg);
+        }
     },
 
-    /* --- GESTIÓN DE APUESTAS --- */
+    // --- GESTIÓN DE SALAS ---
+    crearSala: function() {
+        socket.emit('crearSala');
+    },
+
+    unirseSala: function() {
+        const codigo = document.getElementById('input-codigo-sala').value.trim();
+        if (!codigo) return alert("Ingresa un código de sala.");
+        socket.emit('unirseSala', codigo);
+    },
+
+    salirDeSala: function() {
+        socket.emit('salirDeSala');
+        this.salaActual = null;
+        this.apuestas = [];
+        this.mostrarVista('vista-salas');
+    },
+
+    // --- GESTIÓN DE APUESTAS ---
     agregarApuesta: function() {
         if (this.apuestas.length >= 4) return alert("Máximo 4 jugadores por carrera.");
 
-        const nombre = document.getElementById('apuesta-nombre').value.trim();
         const caballo = document.getElementById('apuesta-caballo').value;
         const cantidad = parseInt(document.getElementById('apuesta-cantidad').value);
 
-        if (!nombre) return alert("Ingresa el nombre del jugador.");
         if (!cantidad || cantidad < 100) return alert("La apuesta mínima es de 100 puntos.");
         if (cantidad > this.usuarioActual.puntos) return alert("No tienes suficientes puntos.");
 
-        // Enviar apuesta al servidor
-        socket.emit('realizarApuesta', { nombre, caballo, cantidad });
+        // Enviar apuesta al servidor (sala actual)
+        socket.emit('realizarApuesta', { 
+            nombre: this.usuarioActual.nombre, 
+            caballo, 
+            cantidad 
+        });
         
-        // Limpiar campos
-        document.getElementById('apuesta-nombre').value = "";
+        // Limpiar campo cantidad
         document.getElementById('apuesta-cantidad').value = "";
     },
 
     renderizarListaApuestas: function(apuestas) {
         const lista = document.getElementById('lista-apuestas');
         lista.innerHTML = "";
-        apuestas.forEach((apuesta, index) => {
+        
+        let miApuesta = false;
+
+        apuestas.forEach((apuesta) => {
             const li = document.createElement('li');
             li.innerHTML = `
-                <span><strong>${apuesta.nombre}</strong> apuesta ${apuesta.cantidad} a ${apuesta.caballo}</span>
+                <span><strong>${apuesta.nombre}</strong>: ${apuesta.cantidad} 🟡 ${apuesta.caballo}</span>
             `;
             lista.appendChild(li);
+
+            if (apuesta.nombre === this.usuarioActual.nombre) {
+                miApuesta = true;
+            }
         });
 
+        // Habilitar botón de inicio solo si hay apuestas (cualquiera puede iniciar por ahora)
         document.getElementById('btn-iniciar-carrera').disabled = apuestas.length === 0;
+        
+        // Deshabilitar botón de apostar si ya apostaste
+        const btnApostar = document.querySelector('.form-apuesta button');
+        if (btnApostar) btnApostar.disabled = miApuesta;
     },
 
     irALaCarrera: function() {
-        if (this.apuestas.length === 0) return;
         socket.emit('iniciarCarrera');
     },
 
@@ -144,7 +188,7 @@ const app = {
     comprarPuntos: async function(cantidad) {
         if (confirm(`¿Deseas comprar ${cantidad} puntos?`)) {
             try {
-                const response = await fetch(`${BACKEND_URL}/api/comprar-puntos`, {
+                const response = await fetch('/api/comprar-puntos', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ nombre: this.usuarioActual.nombre, cantidad })
@@ -285,6 +329,27 @@ const juego = {
 };
 
 // --- EVENTOS SOCKET.IO ---
+socket.on('salaCreada', (data) => {
+    app.salaActual = data.codigo;
+    document.getElementById('sala-codigo').innerText = data.codigo;
+    app.mostrarVista('vista-lobby');
+    app.renderizarListaApuestas(data.estado.apuestas);
+    // Habilitar botón apostar
+    const btnApostar = document.querySelector('.form-apuesta button');
+    if (btnApostar) btnApostar.disabled = false;
+});
+
+socket.on('unidoASala', (data) => {
+    app.salaActual = data.codigo;
+    document.getElementById('sala-codigo').innerText = data.codigo;
+    app.mostrarVista('vista-lobby');
+    app.renderizarListaApuestas(data.estado.apuestas);
+    // Verificar si ya aposté en esta sala
+    const yaAposte = data.estado.apuestas.some(a => a.nombre === app.usuarioActual.nombre);
+    const btnApostar = document.querySelector('.form-apuesta button');
+    if (btnApostar) btnApostar.disabled = yaAposte;
+});
+
 socket.on('actualizarApuestas', (apuestas) => {
     app.apuestas = apuestas;
     app.renderizarListaApuestas(apuestas);
@@ -324,10 +389,18 @@ socket.on('finCarrera', (data) => {
 });
 
 socket.on('actualizarSaldos', () => {
-    // Recargar datos del usuario desde el servidor
     if (app.usuarioActual) {
         app.iniciarSesion(app.usuarioActual.nombre);
     }
+});
+
+socket.on('error', (msg) => {
+    alert("Error: " + msg);
+});
+
+socket.on('notificacion', (msg) => {
+    // Podrías usar un toast o algo más elegante
+    console.log("Notificación:", msg);
 });
 
 // Inicializar aplicación al cargar
