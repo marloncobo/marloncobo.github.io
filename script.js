@@ -1,4 +1,13 @@
-const socket = io('https://marloncobogithubio-production.up.railway.app'); // Conectar al servidor WebSocket
+// ⚠️ CAMBIAR ESTA URL POR LA DE TU PROYECTO EN RAILWAY CUANDO DESPLIEGUES
+// Ejemplo: const API_URL = "https://tu-proyecto.up.railway.app";
+// Para local: const API_URL = "http://localhost:3000";
+
+// Detectar si estamos en local o producción para facilitar las pruebas
+const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:3000'
+    : 'https://marloncobogithubio-production.up.railway.app'; // Reemplaza esto con tu URL real de Railway
+
+const socket = io(API_URL); // Conectar al servidor WebSocket remoto
 
 /* --- GESTIÓN DE LA APLICACIÓN (USUARIOS Y VISTAS) --- */
 const app = {
@@ -30,7 +39,7 @@ const app = {
         if (!nombre) return this.mostrarError("Ingresa un nombre válido.");
 
         try {
-            const response = await fetch('/api/registrar', {
+            const response = await fetch(`${API_URL}/api/registrar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre })
@@ -54,7 +63,7 @@ const app = {
         if (!nombre) return this.mostrarError("Ingresa un nombre.");
 
         try {
-            const response = await fetch('/api/login', {
+            const response = await fetch(`${API_URL}/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre })
@@ -188,7 +197,7 @@ const app = {
     comprarPuntos: async function(cantidad) {
         if (confirm(`¿Deseas comprar ${cantidad} puntos?`)) {
             try {
-                const response = await fetch('/api/comprar-puntos', {
+                const response = await fetch(`${API_URL}/api/comprar-puntos`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ nombre: this.usuarioActual.nombre, cantidad })
