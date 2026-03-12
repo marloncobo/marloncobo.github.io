@@ -32,6 +32,17 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 .paquete span { font-size: 1.2em; font-weight: bold; }
 .paquete button { background: #f1c40f; color: black; border: none; padding: 8px 15px; border-radius: 5px; font-weight: bold; }
 
+/* --- ESTILOS CHAT --- */
+.chat-card { display: flex; flex-direction: column; height: 350px; }
+.chat-mensajes { flex-grow: 1; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; margin-bottom: 10px; text-align: left; font-size: 0.9em; }
+.mensaje { margin-bottom: 5px; }
+.mensaje.sistema { color: #f1c40f; font-style: italic; font-size: 0.8em; text-align: center; margin: 10px 0; }
+.mensaje.mio { text-align: right; color: #3498db; }
+.mensaje strong { color: #2ecc71; }
+.chat-input-area { display: flex; gap: 5px; }
+.chat-input-area input { flex-grow: 1; padding: 8px; border-radius: 5px; border: none; }
+.chat-input-area button { padding: 8px 15px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; }
+
 /* --- VISTA JUEGO --- */
 .contenedor-juego { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 30px; max-width: 1200px; margin: 0 auto; }
 .columna-izquierda { flex: 1; min-width: 620px; }
