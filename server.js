@@ -12,7 +12,7 @@ const server = http.createServer(app);
 
 // --- CONFIGURACIÓN CORS (PERMISIVA) ---
 app.use(cors({
-    origin: "*", // Permitir cualquier origen (GitHub Pages, localhost, etc.)
+    origin: "*", 
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
@@ -22,10 +22,7 @@ app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
 const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 const port = process.env.PORT || 3000;
@@ -34,7 +31,6 @@ const port = process.env.PORT || 3000;
 const connectionUrl = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL;
 let db;
 
-// Intentar conectar a la BD, pero no detener el servidor si falla
 async function conectarBD() {
     if (!connectionUrl) {
         console.warn("⚠️ ADVERTENCIA: No hay variable MYSQL_URL configurada. El servidor funcionará offline.");
@@ -49,12 +45,9 @@ async function conectarBD() {
             enableKeepAlive: true,
             keepAliveInitialDelay: 0
         });
-        
-        // Probar conexión
         await db.query('SELECT 1');
         console.log('✅ Conexión a Base de Datos establecida.');
 
-        // Inicializar tabla
         await db.query(`
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -67,19 +60,9 @@ async function conectarBD() {
         `);
     } catch (error) {
         console.error("❌ ERROR DE CONEXIÓN A BD:", error.message);
-        db = null; // Marcar como nula para manejarlo en los endpoints
+        db = null;
     }
 }
-
-// --- RUTA DE SALUD (Health Check) ---
-// Abre la URL de tu backend en el navegador para ver si responde
-app.get('/', (req, res) => {
-    res.send(`
-        <h1>🐎 Servidor de Carreras Online</h1>
-        <p>Estado: <strong>ACTIVO</strong></p>
-        <p>Base de Datos: <strong>${db ? 'CONECTADA' : 'DESCONECTADA (Revisar Logs)'}</strong></p>
-    `);
-});
 
 // --- GESTIÓN DE SALAS Y JUEGO ---
 const rooms = new Map();
@@ -150,17 +133,47 @@ io.on('connection', (socket) => {
         socket.join(codigo);
         salaActual = codigo;
         if (nombreUsuario && !estado.jugadores.includes(nombreUsuario)) estado.jugadores.push(nombreUsuario);
+        
         socket.emit('unidoASala', { codigo, estado });
-        io.to(codigo).emit('notificacion', `${nombreUsuario || 'Alguien'} se unió.`);
+        
+        // Notificar a todos que alguien entró y actualizar estado de jugadores
+        io.to(codigo).emit('actualizarJugadores', estado.jugadores);
+        io.to(codigo).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario || 'Alguien'} se unió a la sala.` });
     });
 
     socket.on('salirDeSala', () => {
         if (salaActual && rooms.has(salaActual)) {
             const estado = rooms.get(salaActual);
             socket.leave(salaActual);
-            if(nombreUsuario) estado.jugadores = estado.jugadores.filter(n => n !== nombreUsuario);
+            
+            // Remover jugador y sus apuestas si sale antes de la carrera
+            if(nombreUsuario) {
+                estado.jugadores = estado.jugadores.filter(n => n !== nombreUsuario);
+                
+                // Si no ha empezado, quitar su apuesta para no bloquear a los demás
+                if (!estado.enCarrera) {
+                    const apuestaIndex = estado.apuestas.findIndex(a => a.nombre === nombreUsuario);
+                    if (apuestaIndex !== -1) {
+                        // Opcional: Devolver puntos si implementamos esa lógica compleja, 
+                        // por ahora simplemente la quitamos de la mesa visual
+                        estado.apuestas.splice(apuestaIndex, 1);
+                        io.to(salaActual).emit('actualizarApuestas', estado.apuestas);
+                    }
+                }
+            }
+
+            io.to(salaActual).emit('actualizarJugadores', estado.jugadores);
+            io.to(salaActual).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario} salió de la sala.` });
+
             if (estado.jugadores.length === 0) rooms.delete(salaActual);
             salaActual = null;
+        }
+    });
+
+    // --- CHAT ---
+    socket.on('enviarMensajeChat', (texto) => {
+        if (salaActual && nombreUsuario) {
+            io.to(salaActual).emit('mensajeChat', { usuario: nombreUsuario, texto });
         }
     });
 
@@ -169,7 +182,6 @@ io.on('connection', (socket) => {
         const estado = rooms.get(salaActual);
         if (estado.enCarrera) return;
         
-        // Comprobar BD
         if (db) {
             try {
                 const [rows] = await db.query('SELECT puntos FROM usuarios WHERE nombre = ?', [apuesta.nombre]);
@@ -184,6 +196,12 @@ io.on('connection', (socket) => {
         estado.apuestas.push(apuesta);
         io.to(salaActual).emit('actualizarApuestas', estado.apuestas);
         
+        // Verificar si todos han apostado para habilitar el botón (lógica en frontend también)
+        io.to(salaActual).emit('estadoJuegoActualizado', { 
+            apuestas: estado.apuestas.length, 
+            jugadores: estado.jugadores.length 
+        });
+
         if (db) {
             const [user] = await db.query('SELECT * FROM usuarios WHERE nombre = ?', [apuesta.nombre]);
             if(user[0]) socket.emit('actualizarUsuario', user[0]);
@@ -193,7 +211,13 @@ io.on('connection', (socket) => {
     socket.on('iniciarCarrera', () => {
         if (!salaActual || !rooms.has(salaActual)) return;
         const estado = rooms.get(salaActual);
-        if (estado.apuestas.length === 0) return;
+        
+        // VALIDACIÓN IMPORTANTE: Todos deben apostar
+        if (estado.apuestas.length < estado.jugadores.length) {
+            return socket.emit('error', `Faltan jugadores por apostar (${estado.apuestas.length}/${estado.jugadores.length}).`);
+        }
+        if (estado.jugadores.length < 1) return; // Mínimo 1 jugador para pruebas (o 2 si quieres forzar multi)
+
         inicializarJuegoEnSala(estado);
         io.to(salaActual).emit('inicioCarrera', estado);
     });
@@ -231,9 +255,10 @@ io.on('connection', (socket) => {
             setTimeout(() => {
                 estado.apuestas = [];
                 io.to(salaActual).emit('actualizarApuestas', []);
+                // Resetear estado de apuestas en UI
+                io.to(salaActual).emit('estadoJuegoActualizado', { apuestas: 0, jugadores: estado.jugadores.length });
             }, 5000);
         } else {
-            // Verificar Pista
             let minPos = Math.min(...Object.values(estado.posiciones));
             if (minPos > estado.cartasVolteadas) {
                 const cartaPista = estado.pista[estado.cartasVolteadas];
@@ -248,7 +273,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- RUTAS API ---
 app.post('/api/registrar', async (req, res) => {
     if (!db) return res.status(503).json({ error: 'Base de datos no disponible' });
     const { nombre } = req.body;
@@ -281,10 +305,8 @@ app.post('/api/comprar-puntos', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- INICIO DEL SERVIDOR ---
+app.get('/', (req, res) => res.send('<h1>Servidor Carreras OK</h1>'));
+
 conectarBD().then(() => {
-    server.listen(port, () => {
-        console.log(`🚀 Servidor corriendo en puerto ${port}`);
-        console.log(`📡 URL Pública esperada: ${process.env.RAILWAY_PUBLIC_DOMAIN || 'http://localhost:' + port}`);
-    });
+    server.listen(port, () => console.log(`🚀 Servidor en puerto ${port}`));
 });

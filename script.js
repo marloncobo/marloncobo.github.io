@@ -1,27 +1,24 @@
-// ⚠️ CAMBIAR ESTA URL POR LA DE TU PROYECTO EN RAILWAY CUANDO DESPLIEGUES
-// Ejemplo: const API_URL = "https://tu-proyecto.up.railway.app";
-// Para local: const API_URL = "http://localhost:3000";
-
-// Detectar si estamos en local o producción para facilitar las pruebas
+// ⚠️ URL DE TU API EN RAILWAY
 const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:3000'
-    : 'https://marloncobogithubio-production.up.railway.app'; // Reemplaza esto con tu URL real de Railway
+    : 'https://marloncobogithubio-production.up.railway.app'; 
 
-const socket = io(API_URL); // Conectar al servidor WebSocket remoto
+const socket = io(API_URL);
 
 /* --- GESTIÓN DE LA APLICACIÓN (USUARIOS Y VISTAS) --- */
 const app = {
     usuarioActual: null,
     salaActual: null,
     apuestas: [],
+    jugadoresEnSala: 0,
+    apuestasRealizadas: 0,
 
     init: function() {
-        // Verificar si hay sesión guardada
         const usuarioGuardado = localStorage.getItem('usuarioActual');
         if (usuarioGuardado) {
             this.usuarioActual = JSON.parse(usuarioGuardado);
             this.actualizarInfoUsuario();
-            this.mostrarVista('vista-salas'); // Ir a menú de salas, no directo al lobby
+            this.mostrarVista('vista-salas');
             socket.emit('usuarioConectado', this.usuarioActual);
         } else {
             this.mostrarVista('vista-login');
@@ -33,57 +30,43 @@ const app = {
         document.getElementById(idVista).classList.add('activa');
     },
 
-    // --- LOGIN / REGISTRO ---
     registrarUsuario: async function() {
         const nombre = document.getElementById('input-usuario').value.trim();
         if (!nombre) return this.mostrarError("Ingresa un nombre válido.");
-
         try {
             const response = await fetch(`${API_URL}/api/registrar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre })
             });
-
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.error || 'Error al registrar usuario.');
             }
-
             const nuevoUsuario = await response.json();
             this.iniciarSesion(nuevoUsuario.nombre);
-
-        } catch (error) {
-            this.mostrarError(error.message);
-        }
+        } catch (error) { this.mostrarError(error.message); }
     },
 
     iniciarSesion: async function(nombreInput = null) {
         const nombre = nombreInput || document.getElementById('input-usuario').value.trim();
         if (!nombre) return this.mostrarError("Ingresa un nombre.");
-
         try {
             const response = await fetch(`${API_URL}/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre })
             });
-
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.error || 'Usuario no encontrado.');
             }
-
             this.usuarioActual = await response.json();
             localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
-            
             this.actualizarInfoUsuario();
             this.mostrarVista('vista-salas');
             socket.emit('usuarioConectado', this.usuarioActual);
-
-        } catch (error) {
-            this.mostrarError(error.message);
-        }
+        } catch (error) { this.mostrarError(error.message); }
     },
 
     cerrarSesion: function() {
@@ -94,35 +77,18 @@ const app = {
 
     actualizarInfoUsuario: function() {
         if (!this.usuarioActual) return;
-        // Actualizar en todas las vistas donde aparece info del usuario
         const elementosNombre = ['menu-usuario', 'lobby-usuario', 'nombre-apostador'];
         const elementosPuntos = ['menu-puntos', 'lobby-puntos'];
-
-        elementosNombre.forEach(id => {
-            const el = document.getElementById(id);
-            if(el) el.innerText = this.usuarioActual.nombre;
-        });
-
-        elementosPuntos.forEach(id => {
-            const el = document.getElementById(id);
-            if(el) el.innerText = this.usuarioActual.puntos;
-        });
+        elementosNombre.forEach(id => { const el = document.getElementById(id); if(el) el.innerText = this.usuarioActual.nombre; });
+        elementosPuntos.forEach(id => { const el = document.getElementById(id); if(el) el.innerText = this.usuarioActual.puntos; });
     },
 
     mostrarError: function(msg) {
         const el = document.getElementById('mensaje-login');
-        if(el) {
-            el.innerText = msg;
-            setTimeout(() => el.innerText = "", 3000);
-        } else {
-            alert(msg);
-        }
+        if(el) { el.innerText = msg; setTimeout(() => el.innerText = "", 3000); } else { alert(msg); }
     },
 
-    // --- GESTIÓN DE SALAS ---
-    crearSala: function() {
-        socket.emit('crearSala');
-    },
+    crearSala: function() { socket.emit('crearSala'); },
 
     unirseSala: function() {
         const codigo = document.getElementById('input-codigo-sala').value.trim();
@@ -137,63 +103,65 @@ const app = {
         this.mostrarVista('vista-salas');
     },
 
-    // --- GESTIÓN DE APUESTAS ---
     agregarApuesta: function() {
         if (this.apuestas.length >= 4) return alert("Máximo 4 jugadores por carrera.");
-
         const caballo = document.getElementById('apuesta-caballo').value;
         const cantidad = parseInt(document.getElementById('apuesta-cantidad').value);
-
         if (!cantidad || cantidad < 100) return alert("La apuesta mínima es de 100 puntos.");
         if (cantidad > this.usuarioActual.puntos) return alert("No tienes suficientes puntos.");
-
-        // Enviar apuesta al servidor (sala actual)
+        
         socket.emit('realizarApuesta', { 
             nombre: this.usuarioActual.nombre, 
             caballo, 
             cantidad 
         });
-        
-        // Limpiar campo cantidad
         document.getElementById('apuesta-cantidad').value = "";
     },
 
     renderizarListaApuestas: function(apuestas) {
         const lista = document.getElementById('lista-apuestas');
         lista.innerHTML = "";
-        
         let miApuesta = false;
-
         apuestas.forEach((apuesta) => {
             const li = document.createElement('li');
-            li.innerHTML = `
-                <span><strong>${apuesta.nombre}</strong>: ${apuesta.cantidad} 🟡 ${apuesta.caballo}</span>
-            `;
+            li.innerHTML = `<span><strong>${apuesta.nombre}</strong>: ${apuesta.cantidad} 🟡 ${apuesta.caballo}</span>`;
             lista.appendChild(li);
-
-            if (apuesta.nombre === this.usuarioActual.nombre) {
-                miApuesta = true;
-            }
+            if (apuesta.nombre === this.usuarioActual.nombre) miApuesta = true;
         });
 
-        // Habilitar botón de inicio solo si hay apuestas (cualquiera puede iniciar por ahora)
-        document.getElementById('btn-iniciar-carrera').disabled = apuestas.length === 0;
-        
-        // Deshabilitar botón de apostar si ya apostaste
+        // Actualizar botón de apuesta
         const btnApostar = document.querySelector('.form-apuesta button');
         if (btnApostar) btnApostar.disabled = miApuesta;
+
+        // Actualizar contadores locales
+        this.apuestasRealizadas = apuestas.length;
+        this.actualizarEstadoBotonInicio();
     },
 
-    irALaCarrera: function() {
-        socket.emit('iniciarCarrera');
+    actualizarEstadoBotonInicio: function() {
+        const btn = document.getElementById('btn-iniciar-carrera');
+        const estadoTxt = document.getElementById('estado-sala');
+        
+        if (this.jugadoresEnSala > 0 && this.apuestasRealizadas === this.jugadoresEnSala) {
+            btn.disabled = false;
+            btn.style.backgroundColor = "#2ecc71"; // Verde
+            estadoTxt.innerText = "¡Todos listos! Inicien la carrera.";
+            estadoTxt.style.color = "#2ecc71";
+        } else {
+            btn.disabled = true;
+            btn.style.backgroundColor = "#95a5a6"; // Gris
+            estadoTxt.innerText = `Esperando apuestas: ${this.apuestasRealizadas} / ${this.jugadoresEnSala}`;
+            estadoTxt.style.color = "#f39c12";
+        }
     },
+
+    irALaCarrera: function() { socket.emit('iniciarCarrera'); },
 
     volverAlLobby: function() {
         document.getElementById('modal-resultados').style.display = "none";
         this.mostrarVista('vista-lobby');
     },
 
-    /* --- TIENDA DE PUNTOS --- */
     comprarPuntos: async function(cantidad) {
         if (confirm(`¿Deseas comprar ${cantidad} puntos?`)) {
             try {
@@ -202,17 +170,12 @@ const app = {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ nombre: this.usuarioActual.nombre, cantidad })
                 });
-
                 if (!response.ok) throw new Error('Error al comprar puntos.');
-
                 const usuarioActualizado = await response.json();
                 this.usuarioActual = usuarioActualizado;
                 this.actualizarInfoUsuario();
                 alert(`¡Has comprado ${cantidad} puntos!`);
-
-            } catch (error) {
-                alert(error.message);
-            }
+            } catch (error) { alert(error.message); }
         }
     },
 
@@ -220,10 +183,8 @@ const app = {
         const modal = document.getElementById('modal-resultados');
         const lista = document.getElementById('lista-ganancias');
         const titulo = document.getElementById('titulo-ganador');
-        
         titulo.innerHTML = `🏆 ¡Gana ${ganador}!`;
         lista.innerHTML = "";
-
         this.apuestas.forEach(apuesta => {
             const div = document.createElement('div');
             if (apuesta.caballo === ganador) {
@@ -236,8 +197,30 @@ const app = {
             }
             lista.appendChild(div);
         });
-
         modal.style.display = "block";
+    },
+
+    // --- CHAT ---
+    enviarMensajeChat: function() {
+        const input = document.getElementById('input-chat');
+        const texto = input.value.trim();
+        if (texto) {
+            socket.emit('enviarMensajeChat', texto);
+            input.value = "";
+        }
+    },
+
+    checkEnterChat: function(e) {
+        if(e.key === 'Enter') this.enviarMensajeChat();
+    },
+
+    agregarMensajeChat: function(usuario, texto) {
+        const container = document.getElementById('chat-mensajes');
+        const div = document.createElement('div');
+        div.className = usuario === this.usuarioActual.nombre ? 'mensaje mio' : (usuario === 'Sistema' ? 'mensaje sistema' : 'mensaje');
+        div.innerHTML = usuario === 'Sistema' ? texto : `<strong>${usuario}:</strong> ${texto}`;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight; // Auto-scroll
     }
 };
 
@@ -252,57 +235,41 @@ const juego = {
         this.posiciones = estado.posiciones;
         this.cartasVolteadas = estado.cartasVolteadas;
         this.pista = estado.pista;
-        
         document.getElementById('btn-sacar').disabled = false;
         document.getElementById('log').innerHTML = "<em>Carrera iniciada. ¡Buena suerte!</em><br>";
-
-        // Reset UI
         document.getElementById('mazo-visual').style.opacity = '1';
         const cartaActiva = document.getElementById('carta-activa');
         cartaActiva.className = "carta-grande carta-vacia";
         cartaActiva.innerHTML = "TU CARTA";
         cartaActiva.style.borderColor = "rgba(255,255,255,0.3)";
         cartaActiva.style.color = "rgba(255,255,255,0.5)";
-
         this.dibujarTablero();
     },
 
-    jugarTurno: function() {
-        socket.emit('sacarCarta');
-    },
+    jugarTurno: function() { socket.emit('sacarCarta'); },
 
     dibujarTablero: function() {
         const carrilesDiv = document.getElementById('carriles');
         carrilesDiv.innerHTML = '';
-
         this.palos.forEach((palo) => {
             let carril = `<div class="carril">
                     <div class="nombre-palo" style="color: ${this.getColorPalo(palo)}">${palo}</div>
                     <div class="casillas">`;
-            for(let i=0; i<=7; i++) {
-                carril += `<div class="casilla"></div>`;
-            }
-            carril += `<div class="caballo-ficha" id="ficha-${palo}" style="left: 0px;">🐎</div>
-                    </div></div>`;
+            for(let i=0; i<=7; i++) { carril += `<div class="casilla"></div>`; }
+            carril += `<div class="caballo-ficha" id="ficha-${palo}" style="left: 0px;">🐎</div></div></div>`;
             carrilesDiv.innerHTML += carril;
         });
-
         const pistaUI = document.getElementById('pista-ui');
         pistaUI.innerHTML = '';
-        for(let i=0; i<7; i++) {
-            pistaUI.innerHTML += `<div class="carta-pista" id="pista-${i}">?</div>`;
-        }
+        for(let i=0; i<7; i++) { pistaUI.innerHTML += `<div class="carta-pista" id="pista-${i}">?</div>`; }
         this.actualizarUI();
     },
 
     actualizarUI: function() {
         this.palos.forEach(palo => {
             const ficha = document.getElementById(`ficha-${palo}`);
-            if (ficha) {
-                ficha.style.left = ((this.posiciones[palo] * 49) + 2) + 'px';
-            }
+            if (ficha) ficha.style.left = ((this.posiciones[palo] * 49) + 2) + 'px';
         });
-
         for(let i=0; i<7; i++) {
             const cartaUI = document.getElementById(`pista-${i}`);
             if (i < this.cartasVolteadas) {
@@ -319,8 +286,7 @@ const juego = {
         const el = document.getElementById('carta-activa');
         el.className = "carta-grande";
         let color = this.getColorPalo(carta.palo);
-        el.style.color = color;
-        el.style.borderColor = color;
+        el.style.color = color; el.style.borderColor = color;
         el.innerHTML = `<span class="numero-carta">${carta.numero}</span><span class="palo-carta">${carta.palo}</span>`;
     },
 
@@ -342,21 +308,22 @@ socket.on('salaCreada', (data) => {
     app.salaActual = data.codigo;
     document.getElementById('sala-codigo').innerText = data.codigo;
     app.mostrarVista('vista-lobby');
+    app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
-    // Habilitar botón apostar
-    const btnApostar = document.querySelector('.form-apuesta button');
-    if (btnApostar) btnApostar.disabled = false;
+    app.agregarMensajeChat('Sistema', `Sala ${data.codigo} creada.`);
 });
 
 socket.on('unidoASala', (data) => {
     app.salaActual = data.codigo;
     document.getElementById('sala-codigo').innerText = data.codigo;
     app.mostrarVista('vista-lobby');
+    app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
-    // Verificar si ya aposté en esta sala
-    const yaAposte = data.estado.apuestas.some(a => a.nombre === app.usuarioActual.nombre);
-    const btnApostar = document.querySelector('.form-apuesta button');
-    if (btnApostar) btnApostar.disabled = yaAposte;
+});
+
+socket.on('actualizarJugadores', (jugadores) => {
+    app.jugadoresEnSala = jugadores.length;
+    app.actualizarEstadoBotonInicio();
 });
 
 socket.on('actualizarApuestas', (apuestas) => {
@@ -364,9 +331,19 @@ socket.on('actualizarApuestas', (apuestas) => {
     app.renderizarListaApuestas(apuestas);
 });
 
+socket.on('estadoJuegoActualizado', (data) => {
+    app.apuestasRealizadas = data.apuestas;
+    app.jugadoresEnSala = data.jugadores;
+    app.actualizarEstadoBotonInicio();
+});
+
 socket.on('inicioCarrera', (estado) => {
     app.mostrarVista('vista-juego');
     juego.inicializarDatos(estado);
+});
+
+socket.on('mensajeChat', (data) => {
+    app.agregarMensajeChat(data.usuario, data.texto);
 });
 
 socket.on('cartaSacada', (data) => {
@@ -397,22 +374,8 @@ socket.on('finCarrera', (data) => {
     }
 });
 
-socket.on('actualizarSaldos', () => {
-    if (app.usuarioActual) {
-        app.iniciarSesion(app.usuarioActual.nombre);
-    }
-});
+socket.on('actualizarSaldos', () => { if (app.usuarioActual) app.iniciarSesion(app.usuarioActual.nombre); });
+socket.on('error', (msg) => { alert("Error: " + msg); });
+socket.on('notificacion', (msg) => { console.log("Notificación:", msg); });
 
-socket.on('error', (msg) => {
-    alert("Error: " + msg);
-});
-
-socket.on('notificacion', (msg) => {
-    // Podrías usar un toast o algo más elegante
-    console.log("Notificación:", msg);
-});
-
-// Inicializar aplicación al cargar
-window.onload = function() {
-    app.init();
-};
+window.onload = function() { app.init(); };

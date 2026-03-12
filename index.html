@@ -67,10 +67,8 @@
             <!-- Panel de Apuestas -->
             <div class="card apuesta-card">
                 <h3>🎰 Realizar Apuesta</h3>
-                <p>Máximo 4 jugadores por carrera.</p>
 
                 <div class="form-apuesta">
-                    <!-- El nombre se toma del usuario logueado automáticamente o se muestra solo -->
                     <div style="padding: 10px; font-weight: bold;">Apuestas como: <span id="nombre-apostador">Yo</span></div>
 
                     <select id="apuesta-caballo">
@@ -83,27 +81,41 @@
                     <button onclick="app.agregarApuesta()">Apostar</button>
                 </div>
 
-                <ul id="lista-apuestas" class="lista-apuestas">
-                    <!-- Aquí se añaden los jugadores -->
-                </ul>
+                <ul id="lista-apuestas" class="lista-apuestas"></ul>
 
-                <button id="btn-iniciar-carrera" onclick="app.irALaCarrera()" disabled class="btn-grande">🏁 INICIAR CARRERA</button>
+                <!-- Estado y Botón de Inicio -->
+                <div style="margin-top: 20px;">
+                    <p id="estado-sala" style="font-weight: bold; color: #f39c12;">Esperando jugadores...</p>
+                    <button id="btn-iniciar-carrera" onclick="app.irALaCarrera()" disabled class="btn-grande">🏁 INICIAR CARRERA</button>
+                </div>
             </div>
 
-            <!-- Tienda -->
-            <div class="card tienda-card">
-                <h3>🛒 Tienda de Puntos</h3>
-                <div class="paquete" onclick="app.comprarPuntos(1000)">
-                    <span>1,000 pts</span>
-                    <button>Comprar</button>
+            <!-- Columna Derecha: Tienda y Chat -->
+            <div style="display: flex; flex-direction: column; gap: 20px; flex: 1; min-width: 300px;">
+
+                <!-- Chat de Sala -->
+                <div class="card chat-card">
+                    <h3>💬 Chat de Sala</h3>
+                    <div id="chat-mensajes" class="chat-mensajes">
+                        <div class="mensaje sistema">Bienvenido al chat de la sala.</div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="input-chat" placeholder="Escribe un mensaje..." onkeypress="app.checkEnterChat(event)">
+                        <button onclick="app.enviarMensajeChat()">Enviar</button>
+                    </div>
                 </div>
-                <div class="paquete" onclick="app.comprarPuntos(5000)">
-                    <span>5,000 pts</span>
-                    <button>Comprar</button>
-                </div>
-                <div class="paquete" onclick="app.comprarPuntos(10000)">
-                    <span>10,000 pts</span>
-                    <button>Comprar</button>
+
+                <!-- Tienda -->
+                <div class="card tienda-card">
+                    <h3>🛒 Tienda de Puntos</h3>
+                    <div class="paquete" onclick="app.comprarPuntos(1000)">
+                        <span>1,000 pts</span>
+                        <button>Comprar</button>
+                    </div>
+                    <div class="paquete" onclick="app.comprarPuntos(5000)">
+                        <span>5,000 pts</span>
+                        <button>Comprar</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -131,8 +143,6 @@
 
                 <div class="controles">
                     <button id="btn-sacar" onclick="juego.jugarTurno()">Sacar Carta</button>
-                    <!-- Quitamos auto play global para evitar caos en multi-sala por ahora, o lo dejamos local -->
-                    <!-- <button id="btn-auto" onclick="juego.toggleAutoPlay()" style="background-color: #3498db; color: white;">▶ Auto</button> -->
                     <button onclick="app.volverAlLobby()" style="background-color: #95a5a6; color: white;">🔙 Volver al Lobby</button>
                 </div>
                 <div id="log"></div>
