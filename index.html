@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Carrera de Caballos - Apuestas</title>
     <link rel="stylesheet" href="style.css">
+    <!-- Librería para generar códigos QR -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -45,7 +47,7 @@
                 <p>Ingresa el código de la sala:</p>
                 <div style="display: flex; gap: 10px;">
                     <input type="text" id="input-codigo-sala" placeholder="Código (ej. AB12)" style="text-transform: uppercase;">
-                    <button onclick="app.unirseSala()">Entrar</button>
+                    <button onclick="app.unirseSalaInput()">Entrar</button>
                 </div>
             </div>
         </div>
@@ -55,7 +57,7 @@
     <div id="vista-lobby" class="vista">
         <header>
             <div class="usuario-info">
-                🏠 Sala: <span id="sala-codigo" style="color: #f1c40f;">---</span> |
+                🏠 Sala: <span id="sala-codigo" style="color: #f1c40f; cursor: pointer; text-decoration: underline;" onclick="app.mostrarModalQR()" title="Ver código QR">---</span> |
                 👤 <span id="lobby-usuario">Invitado</span> | 💰 <span id="lobby-puntos">0</span> pts
             </div>
             <button onclick="app.salirDeSala()" class="btn-pequeno">Salir de Sala</button>
@@ -156,6 +158,18 @@
             <h2 id="titulo-ganador">¡Ganador!</h2>
             <div id="lista-ganancias"></div>
             <button onclick="app.volverAlLobby()">Continuar</button>
+        </div>
+    </div>
+
+    <!-- MODAL CÓDIGO QR -->
+    <div id="modal-qr" class="modal">
+        <div class="modal-content" style="text-align: center;">
+            <h2>Invita a tus amigos</h2>
+            <p>Escanea este código o comparte el enlace:</p>
+            <div id="qrcode" style="display: flex; justify-content: center; margin: 20px 0; background: white; padding: 20px; border-radius: 10px;"></div>
+            <input type="text" id="link-sala" readonly style="width: 100%; padding: 10px; margin-bottom: 20px; border-radius: 5px; border: 1px solid #ccc; text-align: center; color: black;">
+            <button onclick="app.copiarEnlace()" style="margin-right: 10px;">📋 Copiar Enlace</button>
+            <button onclick="app.cerrarModalQR()" style="background-color: #e74c3c;">Cerrar</button>
         </div>
     </div>
 

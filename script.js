@@ -12,14 +12,26 @@ const app = {
     apuestas: [],
     jugadoresEnSala: 0,
     apuestasRealizadas: 0,
+    qrCodeObj: null,
 
     init: function() {
         const usuarioGuardado = localStorage.getItem('usuarioActual');
+        
+        // Comprobar si hay un código de sala en la URL (?sala=XYZ)
+        const urlParams = new URLSearchParams(window.location.search);
+        const salaEnUrl = urlParams.get('sala');
+
         if (usuarioGuardado) {
             this.usuarioActual = JSON.parse(usuarioGuardado);
             this.actualizarInfoUsuario();
-            this.mostrarVista('vista-salas');
             socket.emit('usuarioConectado', this.usuarioActual);
+            
+            if (salaEnUrl) {
+                // Si hay sala en URL y está logueado, unirse directamente
+                socket.emit('unirseSala', salaEnUrl);
+            } else {
+                this.mostrarVista('vista-salas');
+            }
         } else {
             this.mostrarVista('vista-login');
         }
@@ -64,8 +76,16 @@ const app = {
             this.usuarioActual = await response.json();
             localStorage.setItem('usuarioActual', JSON.stringify(this.usuarioActual));
             this.actualizarInfoUsuario();
-            this.mostrarVista('vista-salas');
             socket.emit('usuarioConectado', this.usuarioActual);
+
+            // Verificar si debe ir a una sala desde la URL tras login
+            const urlParams = new URLSearchParams(window.location.search);
+            const salaEnUrl = urlParams.get('sala');
+            if (salaEnUrl) {
+                socket.emit('unirseSala', salaEnUrl);
+            } else {
+                this.mostrarVista('vista-salas');
+            }
         } catch (error) { this.mostrarError(error.message); }
     },
 
@@ -73,6 +93,8 @@ const app = {
         localStorage.removeItem('usuarioActual');
         this.usuarioActual = null;
         this.mostrarVista('vista-login');
+        // Limpiar URL si hay sala
+        window.history.replaceState({}, document.title, window.location.pathname);
     },
 
     actualizarInfoUsuario: function() {
@@ -90,7 +112,7 @@ const app = {
 
     crearSala: function() { socket.emit('crearSala'); },
 
-    unirseSala: function() {
+    unirseSalaInput: function() {
         const codigo = document.getElementById('input-codigo-sala').value.trim();
         if (!codigo) return alert("Ingresa un código de sala.");
         socket.emit('unirseSala', codigo);
@@ -101,6 +123,50 @@ const app = {
         this.salaActual = null;
         this.apuestas = [];
         this.mostrarVista('vista-salas');
+        // Limpiar URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        document.getElementById('chat-mensajes').innerHTML = '<div class="mensaje sistema">Bienvenido al chat de la sala.</div>';
+    },
+
+    // --- CÓDIGO QR Y ENLACES ---
+    mostrarModalQR: function() {
+        if (!this.salaActual) return;
+        
+        const modal = document.getElementById('modal-qr');
+        const baseUrl = window.location.origin + window.location.pathname;
+        const enlaceCompleto = `${baseUrl}?sala=${this.salaActual}`;
+        
+        document.getElementById('link-sala').value = enlaceCompleto;
+
+        const qrContainer = document.getElementById('qrcode');
+        qrContainer.innerHTML = ''; // Limpiar anterior
+        
+        // Generar nuevo QR
+        this.qrCodeObj = new QRCode(qrContainer, {
+            text: enlaceCompleto,
+            width: 200,
+            height: 200,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+        });
+
+        modal.style.display = "block";
+    },
+
+    cerrarModalQR: function() {
+        document.getElementById('modal-qr').style.display = "none";
+    },
+
+    copiarEnlace: function() {
+        const copyText = document.getElementById("link-sala");
+        copyText.select();
+        copyText.setSelectionRange(0, 99999); // Para móviles
+        navigator.clipboard.writeText(copyText.value).then(() => {
+            alert("¡Enlace copiado al portapapeles!");
+        }).catch(err => {
+            console.error('Error al copiar: ', err);
+        });
     },
 
     agregarApuesta: function() {
@@ -129,11 +195,9 @@ const app = {
             if (apuesta.nombre === this.usuarioActual.nombre) miApuesta = true;
         });
 
-        // Actualizar botón de apuesta
         const btnApostar = document.querySelector('.form-apuesta button');
         if (btnApostar) btnApostar.disabled = miApuesta;
 
-        // Actualizar contadores locales
         this.apuestasRealizadas = apuestas.length;
         this.actualizarEstadoBotonInicio();
     },
@@ -144,12 +208,12 @@ const app = {
         
         if (this.jugadoresEnSala > 0 && this.apuestasRealizadas === this.jugadoresEnSala) {
             btn.disabled = false;
-            btn.style.backgroundColor = "#2ecc71"; // Verde
+            btn.style.backgroundColor = "#2ecc71";
             estadoTxt.innerText = "¡Todos listos! Inicien la carrera.";
             estadoTxt.style.color = "#2ecc71";
         } else {
             btn.disabled = true;
-            btn.style.backgroundColor = "#95a5a6"; // Gris
+            btn.style.backgroundColor = "#95a5a6";
             estadoTxt.innerText = `Esperando apuestas: ${this.apuestasRealizadas} / ${this.jugadoresEnSala}`;
             estadoTxt.style.color = "#f39c12";
         }
@@ -220,7 +284,7 @@ const app = {
         div.className = usuario === this.usuarioActual.nombre ? 'mensaje mio' : (usuario === 'Sistema' ? 'mensaje sistema' : 'mensaje');
         div.innerHTML = usuario === 'Sistema' ? texto : `<strong>${usuario}:</strong> ${texto}`;
         container.appendChild(div);
-        container.scrollTop = container.scrollHeight; // Auto-scroll
+        container.scrollTop = container.scrollHeight;
     }
 };
 
@@ -307,6 +371,9 @@ const juego = {
 socket.on('salaCreada', (data) => {
     app.salaActual = data.codigo;
     document.getElementById('sala-codigo').innerText = data.codigo;
+    // Actualizar URL sin recargar página
+    window.history.replaceState({}, '', `?sala=${data.codigo}`);
+    
     app.mostrarVista('vista-lobby');
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
@@ -316,6 +383,9 @@ socket.on('salaCreada', (data) => {
 socket.on('unidoASala', (data) => {
     app.salaActual = data.codigo;
     document.getElementById('sala-codigo').innerText = data.codigo;
+    // Actualizar URL
+    window.history.replaceState({}, '', `?sala=${data.codigo}`);
+
     app.mostrarVista('vista-lobby');
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
