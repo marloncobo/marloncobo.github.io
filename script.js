@@ -1,7 +1,6 @@
-// ⚠️ URL DE TU API EN RAILWAY
-const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:3000'
-    : 'https://marloncobogithubio-production.up.railway.app'; 
+// Detectar si estamos en GitHub Pages
+const isGitHubPages = window.location.hostname === 'marloncobo.github.io';
+const API_URL = isGitHubPages ? 'https://marloncobogithubio-production.up.railway.app' : 'http://localhost:3000';
 
 const socket = io(API_URL);
 
@@ -332,7 +331,23 @@ const juego = {
     actualizarUI: function() {
         this.palos.forEach(palo => {
             const ficha = document.getElementById(`ficha-${palo}`);
-            if (ficha) ficha.style.left = ((this.posiciones[palo] * 49) + 2) + 'px';
+            // En móviles las casillas son de 30px + 4px borde = 34px. Gap 3px. Total 37px.
+            // En desktop las casillas son de 40px + 4px borde = 44px. Gap 3px. Total 47px.
+            // Para mantenerlo simple, usaremos un cálculo basado en el ancho actual de la casilla.
+            
+            if (ficha) {
+                // Obtenemos el ancho real de una casilla
+                const casillas = document.querySelectorAll('.casilla');
+                if(casillas.length > 0) {
+                    const anchoCasilla = casillas[0].offsetWidth;
+                    // El salto total incluye el gap (3px definido en CSS flex)
+                    const saltoTotal = anchoCasilla + 3; 
+                    ficha.style.left = ((this.posiciones[palo] * saltoTotal) + 2) + 'px';
+                } else {
+                    // Fallback (valor desktop aproximado si no se ha renderizado)
+                    ficha.style.left = ((this.posiciones[palo] * 47) + 2) + 'px';
+                }
+            }
         });
         for(let i=0; i<7; i++) {
             const cartaUI = document.getElementById(`pista-${i}`);
@@ -447,5 +462,12 @@ socket.on('finCarrera', (data) => {
 socket.on('actualizarSaldos', () => { if (app.usuarioActual) app.iniciarSesion(app.usuarioActual.nombre); });
 socket.on('error', (msg) => { alert("Error: " + msg); });
 socket.on('notificacion', (msg) => { console.log("Notificación:", msg); });
+
+// Añadir listener para redimensionar la ventana (para actualizar las posiciones de los caballos si cambia el tamaño)
+window.addEventListener('resize', () => {
+    if (document.getElementById('vista-juego').classList.contains('activa')) {
+        juego.actualizarUI();
+    }
+});
 
 window.onload = function() { app.init(); };
