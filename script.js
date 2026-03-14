@@ -12,11 +12,15 @@ const app = {
     jugadoresEnSala: 0,
     apuestasRealizadas: 0,
     qrCodeObj: null,
+    esAnfitrion: false,
+    configSala: {
+        velocidadAutoPlay: 2000,
+        forzarInicio: false
+    },
 
     init: function() {
         const usuarioGuardado = localStorage.getItem('usuarioActual');
         
-        // Comprobar si hay un código de sala en la URL (?sala=XYZ)
         const urlParams = new URLSearchParams(window.location.search);
         const salaEnUrl = urlParams.get('sala');
 
@@ -26,7 +30,6 @@ const app = {
             socket.emit('usuarioConectado', this.usuarioActual);
             
             if (salaEnUrl) {
-                // Si hay sala en URL y está logueado, unirse directamente
                 socket.emit('unirseSala', salaEnUrl);
             } else {
                 this.mostrarVista('vista-salas');
@@ -77,7 +80,6 @@ const app = {
             this.actualizarInfoUsuario();
             socket.emit('usuarioConectado', this.usuarioActual);
 
-            // Verificar si debe ir a una sala desde la URL tras login
             const urlParams = new URLSearchParams(window.location.search);
             const salaEnUrl = urlParams.get('sala');
             if (salaEnUrl) {
@@ -92,7 +94,6 @@ const app = {
         localStorage.removeItem('usuarioActual');
         this.usuarioActual = null;
         this.mostrarVista('vista-login');
-        // Limpiar URL si hay sala
         window.history.replaceState({}, document.title, window.location.pathname);
     },
 
@@ -121,53 +122,65 @@ const app = {
         socket.emit('salirDeSala');
         this.salaActual = null;
         this.apuestas = [];
+        this.esAnfitrion = false;
         this.mostrarVista('vista-salas');
-        // Limpiar URL
         window.history.replaceState({}, document.title, window.location.pathname);
         document.getElementById('chat-mensajes').innerHTML = '<div class="mensaje sistema">Bienvenido al chat de la sala.</div>';
     },
 
-    // --- CÓDIGO QR Y ENLACES ---
     mostrarModalQR: function() {
         if (!this.salaActual) return;
-        
         const modal = document.getElementById('modal-qr');
         const baseUrl = window.location.origin + window.location.pathname;
         const enlaceCompleto = `${baseUrl}?sala=${this.salaActual}`;
-        
         document.getElementById('link-sala').value = enlaceCompleto;
-
         const qrContainer = document.getElementById('qrcode');
-        qrContainer.innerHTML = ''; // Limpiar anterior
-        
-        // Generar nuevo QR
+        qrContainer.innerHTML = ''; 
         this.qrCodeObj = new QRCode(qrContainer, {
-            text: enlaceCompleto,
-            width: 200,
-            height: 200,
-            colorDark : "#000000",
-            colorLight : "#ffffff",
-            correctLevel : QRCode.CorrectLevel.H
+            text: enlaceCompleto, width: 200, height: 200,
+            colorDark : "#000000", colorLight : "#ffffff", correctLevel : QRCode.CorrectLevel.H
         });
-
         modal.style.display = "block";
     },
 
-    cerrarModalQR: function() {
-        document.getElementById('modal-qr').style.display = "none";
-    },
+    cerrarModalQR: function() { document.getElementById('modal-qr').style.display = "none"; },
 
     copiarEnlace: function() {
         const copyText = document.getElementById("link-sala");
         copyText.select();
-        copyText.setSelectionRange(0, 99999); // Para móviles
+        copyText.setSelectionRange(0, 99999); 
         navigator.clipboard.writeText(copyText.value).then(() => {
             alert("¡Enlace copiado al portapapeles!");
-        }).catch(err => {
-            console.error('Error al copiar: ', err);
-        });
+        }).catch(err => { console.error('Error al copiar: ', err); });
     },
 
+    // --- CONFIGURACIÓN DE SALA (ANFITRIÓN) ---
+    mostrarModalConfig: function() {
+        if (!this.esAnfitrion) return;
+        document.getElementById('config-velocidad').value = this.configSala.velocidadAutoPlay / 1000;
+        document.getElementById('valor-velocidad').innerText = (this.configSala.velocidadAutoPlay / 1000) + 's';
+        document.getElementById('config-forzar-inicio').value = this.configSala.forzarInicio.toString();
+        document.getElementById('modal-config').style.display = "block";
+    },
+
+    cerrarModalConfig: function() {
+        document.getElementById('modal-config').style.display = "none";
+    },
+
+    guardarConfigSala: function() {
+        if (!this.esAnfitrion) return;
+        const velocidad = parseFloat(document.getElementById('config-velocidad').value) * 1000;
+        const forzarInicio = document.getElementById('config-forzar-inicio').value === 'true';
+
+        this.configSala = { velocidadAutoPlay: velocidad, forzarInicio: forzarInicio };
+        
+        socket.emit('actualizarConfigSala', this.configSala);
+        this.cerrarModalConfig();
+        this.actualizarEstadoBotonInicio();
+        alert("Configuración guardada para toda la sala.");
+    },
+
+    // --- APUESTAS ---
     agregarApuesta: function() {
         if (this.apuestas.length >= 4) return alert("Máximo 4 jugadores por carrera.");
         const caballo = document.getElementById('apuesta-caballo').value;
@@ -175,11 +188,7 @@ const app = {
         if (!cantidad || cantidad < 100) return alert("La apuesta mínima es de 100 puntos.");
         if (cantidad > this.usuarioActual.puntos) return alert("No tienes suficientes puntos.");
         
-        socket.emit('realizarApuesta', { 
-            nombre: this.usuarioActual.nombre, 
-            caballo, 
-            cantidad 
-        });
+        socket.emit('realizarApuesta', { nombre: this.usuarioActual.nombre, caballo, cantidad });
         document.getElementById('apuesta-cantidad').value = "";
     },
 
@@ -205,10 +214,20 @@ const app = {
         const btn = document.getElementById('btn-iniciar-carrera');
         const estadoTxt = document.getElementById('estado-sala');
         
-        if (this.jugadoresEnSala > 0 && this.apuestasRealizadas === this.jugadoresEnSala) {
+        // Si no es anfitrión, ocultar el botón completamente o deshabilitarlo permanentemente
+        if (!this.esAnfitrion) {
+            btn.disabled = true;
+            btn.style.backgroundColor = "#95a5a6";
+            estadoTxt.innerText = `Esperando al anfitrión... (Apuestas: ${this.apuestasRealizadas} / ${this.jugadoresEnSala})`;
+            estadoTxt.style.color = "#f39c12";
+            return;
+        }
+
+        // Lógica solo para el anfitrión
+        if (this.jugadoresEnSala > 0 && (this.apuestasRealizadas === this.jugadoresEnSala || this.configSala.forzarInicio)) {
             btn.disabled = false;
             btn.style.backgroundColor = "#2ecc71";
-            estadoTxt.innerText = "¡Todos listos! Inicien la carrera.";
+            estadoTxt.innerText = "¡Listo para iniciar!";
             estadoTxt.style.color = "#2ecc71";
         } else {
             btn.disabled = true;
@@ -218,7 +237,9 @@ const app = {
         }
     },
 
-    irALaCarrera: function() { socket.emit('iniciarCarrera'); },
+    irALaCarrera: function() { 
+        if(this.esAnfitrion) socket.emit('iniciarCarrera'); 
+    },
 
     volverAlLobby: function() {
         document.getElementById('modal-resultados').style.display = "none";
@@ -273,9 +294,7 @@ const app = {
         }
     },
 
-    checkEnterChat: function(e) {
-        if(e.key === 'Enter') this.enviarMensajeChat();
-    },
+    checkEnterChat: function(e) { if(e.key === 'Enter') this.enviarMensajeChat(); },
 
     agregarMensajeChat: function(usuario, texto) {
         const container = document.getElementById('chat-mensajes');
@@ -293,12 +312,12 @@ const juego = {
     posiciones: {},
     cartasVolteadas: 0,
     pista: [],
-
+    
     inicializarDatos: function(estado) {
         this.posiciones = estado.posiciones;
         this.cartasVolteadas = estado.cartasVolteadas;
         this.pista = estado.pista;
-        document.getElementById('btn-sacar').disabled = false;
+        
         document.getElementById('log').innerHTML = "<em>Carrera iniciada. ¡Buena suerte!</em><br>";
         document.getElementById('mazo-visual').style.opacity = '1';
         const cartaActiva = document.getElementById('carta-activa');
@@ -306,10 +325,37 @@ const juego = {
         cartaActiva.innerHTML = "TU CARTA";
         cartaActiva.style.borderColor = "rgba(255,255,255,0.3)";
         cartaActiva.style.color = "rgba(255,255,255,0.5)";
+        
+        // Control de UI según rol
+        const btnSacar = document.getElementById('btn-sacar');
+        const btnAuto = document.getElementById('btn-auto');
+        const msgEsperando = document.getElementById('msg-esperando-anfitrion');
+        
+        if (app.esAnfitrion) {
+            btnSacar.style.display = 'block';
+            btnAuto.style.display = 'block';
+            btnAuto.innerHTML = "▶ Auto";
+            btnAuto.style.backgroundColor = "#3498db";
+            msgEsperando.style.display = 'none';
+        } else {
+            btnSacar.style.display = 'none';
+            btnAuto.style.display = 'none';
+            msgEsperando.style.display = 'block';
+        }
+
         this.dibujarTablero();
     },
 
-    jugarTurno: function() { socket.emit('sacarCarta'); },
+    jugarTurno: function() { 
+        if(app.esAnfitrion) socket.emit('sacarCarta'); 
+    },
+
+    toggleAutoPlay: function() {
+        if(!app.esAnfitrion) return;
+        const btnAuto = document.getElementById('btn-auto');
+        const isActive = btnAuto.innerHTML.includes("Pausar");
+        socket.emit('toggleAutoPlay', !isActive);
+    },
 
     dibujarTablero: function() {
         const carrilesDiv = document.getElementById('carriles');
@@ -331,20 +377,13 @@ const juego = {
     actualizarUI: function() {
         this.palos.forEach(palo => {
             const ficha = document.getElementById(`ficha-${palo}`);
-            // En móviles las casillas son de 30px + 4px borde = 34px. Gap 3px. Total 37px.
-            // En desktop las casillas son de 40px + 4px borde = 44px. Gap 3px. Total 47px.
-            // Para mantenerlo simple, usaremos un cálculo basado en el ancho actual de la casilla.
-            
             if (ficha) {
-                // Obtenemos el ancho real de una casilla
                 const casillas = document.querySelectorAll('.casilla');
                 if(casillas.length > 0) {
                     const anchoCasilla = casillas[0].offsetWidth;
-                    // El salto total incluye el gap (3px definido en CSS flex)
                     const saltoTotal = anchoCasilla + 3; 
                     ficha.style.left = ((this.posiciones[palo] * saltoTotal) + 2) + 'px';
                 } else {
-                    // Fallback (valor desktop aproximado si no se ha renderizado)
                     ficha.style.left = ((this.posiciones[palo] * 47) + 2) + 'px';
                 }
             }
@@ -385,25 +424,35 @@ const juego = {
 // --- EVENTOS SOCKET.IO ---
 socket.on('salaCreada', (data) => {
     app.salaActual = data.codigo;
+    app.esAnfitrion = true;
+    app.configSala = data.estado.configuracion; // Sincronizar config default
     document.getElementById('sala-codigo').innerText = data.codigo;
-    // Actualizar URL sin recargar página
+    document.getElementById('btn-config-sala').style.display = 'block'; // Mostrar botón config
     window.history.replaceState({}, '', `?sala=${data.codigo}`);
     
     app.mostrarVista('vista-lobby');
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
-    app.agregarMensajeChat('Sistema', `Sala ${data.codigo} creada.`);
+    app.agregarMensajeChat('Sistema', `Eres el anfitrión. Puedes configurar la sala.`);
 });
 
 socket.on('unidoASala', (data) => {
     app.salaActual = data.codigo;
+    app.esAnfitrion = false;
+    app.configSala = data.estado.configuracion; // Sincronizar config
     document.getElementById('sala-codigo').innerText = data.codigo;
-    // Actualizar URL
+    document.getElementById('btn-config-sala').style.display = 'none'; // Ocultar botón config
     window.history.replaceState({}, '', `?sala=${data.codigo}`);
 
     app.mostrarVista('vista-lobby');
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
+});
+
+socket.on('configuracionActualizada', (config) => {
+    app.configSala = config;
+    app.actualizarEstadoBotonInicio();
+    app.agregarMensajeChat('Sistema', `El anfitrión actualizó los ajustes de la sala.`);
 });
 
 socket.on('actualizarJugadores', (jugadores) => {
@@ -451,6 +500,11 @@ socket.on('retrocesoCaballo', (data) => {
 });
 
 socket.on('finCarrera', (data) => {
+    if(app.esAnfitrion) {
+        const btnAuto = document.getElementById('btn-auto');
+        btnAuto.innerHTML = "▶ Auto";
+        btnAuto.style.backgroundColor = "#3498db";
+    }
     if (data.ganador) {
         juego.logear(`🏆 <strong>¡GANÓ ${data.ganador.toUpperCase()}!</strong>`);
         setTimeout(() => app.procesarResultados(data.ganador), 1500);
@@ -459,11 +513,23 @@ socket.on('finCarrera', (data) => {
     }
 });
 
+socket.on('actualizarEstadoAutoPlay', (isActive) => {
+    if(app.esAnfitrion) {
+        const btnAuto = document.getElementById('btn-auto');
+        if(isActive) {
+            btnAuto.innerHTML = "⏸ Pausar";
+            btnAuto.style.backgroundColor = "#e67e22";
+        } else {
+            btnAuto.innerHTML = "▶ Auto";
+            btnAuto.style.backgroundColor = "#3498db";
+        }
+    }
+});
+
 socket.on('actualizarSaldos', () => { if (app.usuarioActual) app.iniciarSesion(app.usuarioActual.nombre); });
 socket.on('error', (msg) => { alert("Error: " + msg); });
 socket.on('notificacion', (msg) => { console.log("Notificación:", msg); });
 
-// Añadir listener para redimensionar la ventana (para actualizar las posiciones de los caballos si cambia el tamaño)
 window.addEventListener('resize', () => {
     if (document.getElementById('vista-juego').classList.contains('activa')) {
         juego.actualizarUI();

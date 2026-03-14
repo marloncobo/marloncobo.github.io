@@ -68,7 +68,10 @@
         <div class="panel-central">
             <!-- Panel de Apuestas -->
             <div class="card apuesta-card">
-                <h3>🎰 Realizar Apuesta</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>🎰 Realizar Apuesta</h3>
+                    <button id="btn-config-sala" onclick="app.mostrarModalConfig()" class="btn-pequeno" style="background-color: #34495e; display: none;">⚙️ Ajustes de Sala</button>
+                </div>
 
                 <div class="form-apuesta">
                     <div style="padding: 10px; font-weight: bold;">Apuestas como: <span id="nombre-apostador">Yo</span></div>
@@ -144,7 +147,9 @@
                 </div>
 
                 <div class="controles">
-                    <button id="btn-sacar" onclick="juego.jugarTurno()">Sacar Carta</button>
+                    <button id="btn-sacar" onclick="juego.jugarTurno()" style="display: none;">Sacar Carta</button>
+                    <button id="btn-auto" onclick="juego.toggleAutoPlay()" style="background-color: #3498db; color: white; display: none;">▶ Auto</button>
+                    <p id="msg-esperando-anfitrion" style="color: #f1c40f; font-style: italic; display: none;">Esperando que el anfitrión mueva las cartas...</p>
                     <button onclick="app.volverAlLobby()" style="background-color: #95a5a6; color: white;">🔙 Volver al Lobby</button>
                 </div>
                 <div id="log"></div>
@@ -170,6 +175,32 @@
             <input type="text" id="link-sala" readonly style="width: 100%; padding: 10px; margin-bottom: 20px; border-radius: 5px; border: 1px solid #ccc; text-align: center; color: black;">
             <button onclick="app.copiarEnlace()" style="margin-right: 10px;">📋 Copiar Enlace</button>
             <button onclick="app.cerrarModalQR()" style="background-color: #e74c3c;">Cerrar</button>
+        </div>
+    </div>
+
+    <!-- MODAL CONFIGURACIÓN DE SALA -->
+    <div id="modal-config" class="modal">
+        <div class="modal-content" style="text-align: left;">
+            <h2 style="text-align: center; margin-top: 0;">⚙️ Ajustes de la Sala</h2>
+
+            <div style="margin-bottom: 20px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Velocidad del Auto Play (segundos por carta):</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="range" id="config-velocidad" min="0.5" max="5" step="0.5" value="2" style="flex-grow: 1;" oninput="document.getElementById('valor-velocidad').innerText = this.value + 's'">
+                    <span id="valor-velocidad" style="font-weight: bold; width: 40px; text-align: right;">2s</span>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Permitir iniciar sin que todos apuesten:</label>
+                <select id="config-forzar-inicio" style="width: 100%; padding: 10px; border-radius: 5px;">
+                    <option value="false">No (Todos deben apostar)</option>
+                    <option value="true">Sí (El anfitrión puede forzar el inicio)</option>
+                </select>
+            </div>
+
+            <button onclick="app.guardarConfigSala()" style="width: 100%; background-color: #2ecc71; margin-bottom: 10px;">Guardar Ajustes</button>
+            <button onclick="app.cerrarModalConfig()" style="width: 100%; background-color: #95a5a6;">Cancelar</button>
         </div>
     </div>
 

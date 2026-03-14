@@ -73,6 +73,11 @@ function generarCodigoSala() {
 
 function crearEstadoInicial() {
     return {
+        anfitrion: null,
+        configuracion: {
+            velocidadAutoPlay: 2000, // milisegundos
+            forzarInicio: false // Si es true, el anfitrión puede iniciar sin que todos apuesten
+        },
         enCarrera: false,
         apuestas: [],
         posiciones: { 'Oros': 0, 'Copas': 0, 'Espadas': 0, 'Bastos': 0 },
@@ -81,7 +86,8 @@ function crearEstadoInicial() {
         mazo: [],
         mazoRobo: [],
         ganador: null,
-        jugadores: []
+        jugadores: [],
+        autoPlayInterval: null 
     };
 }
 
@@ -104,6 +110,11 @@ function inicializarJuegoEnSala(estado) {
     estado.cartasVolteadas = 0;
     estado.enCarrera = true;
     estado.ganador = null;
+    
+    if(estado.autoPlayInterval) {
+        clearInterval(estado.autoPlayInterval);
+        estado.autoPlayInterval = null;
+    }
 }
 
 // --- SOCKET.IO ---
@@ -117,9 +128,12 @@ io.on('connection', (socket) => {
     socket.on('crearSala', () => {
         const codigo = generarCodigoSala();
         const nuevoEstado = crearEstadoInicial();
+        nuevoEstado.anfitrion = nombreUsuario; // El creador es el anfitrión
+        
         rooms.set(codigo, nuevoEstado);
         socket.join(codigo);
         salaActual = codigo;
+        
         if(nombreUsuario) nuevoEstado.jugadores.push(nombreUsuario);
         socket.emit('salaCreada', { codigo, estado: nuevoEstado });
     });
@@ -136,7 +150,6 @@ io.on('connection', (socket) => {
         
         socket.emit('unidoASala', { codigo, estado });
         
-        // Notificar a todos que alguien entró y actualizar estado de jugadores
         io.to(codigo).emit('actualizarJugadores', estado.jugadores);
         io.to(codigo).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario || 'Alguien'} se unió a la sala.` });
     });
@@ -146,18 +159,27 @@ io.on('connection', (socket) => {
             const estado = rooms.get(salaActual);
             socket.leave(salaActual);
             
-            // Remover jugador y sus apuestas si sale antes de la carrera
             if(nombreUsuario) {
                 estado.jugadores = estado.jugadores.filter(n => n !== nombreUsuario);
                 
-                // Si no ha empezado, quitar su apuesta para no bloquear a los demás
                 if (!estado.enCarrera) {
                     const apuestaIndex = estado.apuestas.findIndex(a => a.nombre === nombreUsuario);
                     if (apuestaIndex !== -1) {
-                        // Opcional: Devolver puntos si implementamos esa lógica compleja, 
-                        // por ahora simplemente la quitamos de la mesa visual
                         estado.apuestas.splice(apuestaIndex, 1);
                         io.to(salaActual).emit('actualizarApuestas', estado.apuestas);
+                        io.to(salaActual).emit('estadoJuegoActualizado', { 
+                            apuestas: estado.apuestas.length, 
+                            jugadores: estado.jugadores.length 
+                        });
+                    }
+                }
+
+                // Si el anfitrión sale, designar a otro o cerrar sala
+                if (estado.anfitrion === nombreUsuario) {
+                    if (estado.jugadores.length > 0) {
+                        estado.anfitrion = estado.jugadores[0]; // El siguiente es anfitrión
+                        io.to(salaActual).emit('mensajeChat', { usuario: 'Sistema', texto: `${estado.anfitrion} es el nuevo anfitrión.` });
+                        // Aquí idealmente emitiríamos un evento para que el nuevo anfitrión vea los botones
                     }
                 }
             }
@@ -165,10 +187,34 @@ io.on('connection', (socket) => {
             io.to(salaActual).emit('actualizarJugadores', estado.jugadores);
             io.to(salaActual).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario} salió de la sala.` });
 
-            if (estado.jugadores.length === 0) rooms.delete(salaActual);
+            if (estado.jugadores.length === 0) {
+                if(estado.autoPlayInterval) clearInterval(estado.autoPlayInterval);
+                rooms.delete(salaActual);
+            }
             salaActual = null;
         }
     });
+
+    // --- CONFIGURACIÓN DE SALA ---
+    socket.on('actualizarConfigSala', (nuevaConfig) => {
+        if (!salaActual || !rooms.has(salaActual)) return;
+        const estado = rooms.get(salaActual);
+        
+        // Solo el anfitrión puede cambiar esto
+        if (estado.anfitrion === nombreUsuario) {
+            estado.configuracion = nuevaConfig;
+            // Si el autoplay está corriendo, reiniciar el intervalo con la nueva velocidad
+            if (estado.autoPlayInterval) {
+                clearInterval(estado.autoPlayInterval);
+                estado.autoPlayInterval = setInterval(() => {
+                    sacarCartaLogica(salaActual, estado);
+                }, estado.configuracion.velocidadAutoPlay);
+            }
+            // Avisar a todos los clientes del cambio
+            io.to(salaActual).emit('configuracionActualizada', estado.configuracion);
+        }
+    });
+
 
     // --- CHAT ---
     socket.on('enviarMensajeChat', (texto) => {
@@ -196,7 +242,6 @@ io.on('connection', (socket) => {
         estado.apuestas.push(apuesta);
         io.to(salaActual).emit('actualizarApuestas', estado.apuestas);
         
-        // Verificar si todos han apostado para habilitar el botón (lógica en frontend también)
         io.to(salaActual).emit('estadoJuegoActualizado', { 
             apuestas: estado.apuestas.length, 
             jugadores: estado.jugadores.length 
@@ -212,34 +257,68 @@ io.on('connection', (socket) => {
         if (!salaActual || !rooms.has(salaActual)) return;
         const estado = rooms.get(salaActual);
         
-        // VALIDACIÓN IMPORTANTE: Todos deben apostar
-        if (estado.apuestas.length < estado.jugadores.length) {
+        // Solo el anfitrión inicia
+        if (estado.anfitrion !== nombreUsuario) return socket.emit('error', 'Solo el anfitrión puede iniciar la carrera.');
+
+        // Validación: Todos apuestan O el anfitrión forzó el inicio
+        if (estado.apuestas.length < estado.jugadores.length && !estado.configuracion.forzarInicio) {
             return socket.emit('error', `Faltan jugadores por apostar (${estado.apuestas.length}/${estado.jugadores.length}).`);
         }
-        if (estado.jugadores.length < 1) return; // Mínimo 1 jugador para pruebas (o 2 si quieres forzar multi)
+        if (estado.jugadores.length < 1) return;
 
         inicializarJuegoEnSala(estado);
         io.to(salaActual).emit('inicioCarrera', estado);
     });
 
-    socket.on('sacarCarta', async () => {
+    socket.on('toggleAutoPlay', (isActive) => {
         if (!salaActual || !rooms.has(salaActual)) return;
         const estado = rooms.get(salaActual);
+        
+        if (estado.anfitrion !== nombreUsuario) return;
+
+        if (isActive) {
+            if(!estado.autoPlayInterval && estado.enCarrera && !estado.ganador) {
+                estado.autoPlayInterval = setInterval(() => {
+                    sacarCartaLogica(salaActual, estado);
+                }, estado.configuracion.velocidadAutoPlay); // Usar la velocidad configurada
+            }
+        } else {
+            if(estado.autoPlayInterval) {
+                clearInterval(estado.autoPlayInterval);
+                estado.autoPlayInterval = null;
+            }
+        }
+        io.to(salaActual).emit('actualizarEstadoAutoPlay', isActive);
+    });
+
+    socket.on('sacarCarta', () => {
+        if (!salaActual || !rooms.has(salaActual)) return;
+        const estado = rooms.get(salaActual);
+        
+        if (estado.anfitrion !== nombreUsuario) return;
+        if(estado.autoPlayInterval) return;
+
+        sacarCartaLogica(salaActual, estado);
+    });
+
+    async function sacarCartaLogica(codigoSala, estado) {
         if (!estado.enCarrera || estado.ganador) return;
 
         if (estado.mazoRobo.length === 0) {
-            io.to(salaActual).emit('finCarrera', { ganador: null, motivo: 'Empate' });
+            io.to(codigoSala).emit('finCarrera', { ganador: null, motivo: 'Empate' });
             estado.enCarrera = false;
+            if(estado.autoPlayInterval) clearInterval(estado.autoPlayInterval);
             return;
         }
 
         const carta = estado.mazoRobo.pop();
         estado.posiciones[carta.palo]++;
-        io.to(salaActual).emit('cartaSacada', { carta, posiciones: estado.posiciones });
+        io.to(codigoSala).emit('cartaSacada', { carta, posiciones: estado.posiciones });
 
         if (estado.posiciones[carta.palo] >= 7) {
             estado.ganador = carta.palo;
             estado.enCarrera = false;
+            if(estado.autoPlayInterval) clearInterval(estado.autoPlayInterval);
             
             if (db) {
                 for (const apuesta of estado.apuestas) {
@@ -250,27 +329,42 @@ io.on('connection', (socket) => {
                 }
             }
             
-            io.to(salaActual).emit('finCarrera', { ganador: carta.palo, motivo: 'Meta' });
-            io.to(salaActual).emit('actualizarSaldos');
+            io.to(codigoSala).emit('finCarrera', { ganador: carta.palo, motivo: 'Meta' });
+            io.to(codigoSala).emit('actualizarSaldos');
             setTimeout(() => {
                 estado.apuestas = [];
-                io.to(salaActual).emit('actualizarApuestas', []);
-                // Resetear estado de apuestas en UI
-                io.to(salaActual).emit('estadoJuegoActualizado', { apuestas: 0, jugadores: estado.jugadores.length });
+                io.to(codigoSala).emit('actualizarApuestas', []);
+                io.to(codigoSala).emit('estadoJuegoActualizado', { apuestas: 0, jugadores: estado.jugadores.length });
             }, 5000);
         } else {
             let minPos = Math.min(...Object.values(estado.posiciones));
             if (minPos > estado.cartasVolteadas) {
                 const cartaPista = estado.pista[estado.cartasVolteadas];
                 estado.cartasVolteadas++;
-                io.to(salaActual).emit('cartaPistaVolteada', { carta: cartaPista, indice: estado.cartasVolteadas - 1 });
+                
+                let estabaEnAuto = false;
+                if(estado.autoPlayInterval) {
+                    estabaEnAuto = true;
+                    clearInterval(estado.autoPlayInterval);
+                    estado.autoPlayInterval = null;
+                }
+
+                io.to(codigoSala).emit('cartaPistaVolteada', { carta: cartaPista, indice: estado.cartasVolteadas - 1 });
+                
                 setTimeout(() => {
                     estado.posiciones[cartaPista.palo]--;
-                    io.to(salaActual).emit('retrocesoCaballo', { palo: cartaPista.palo, posiciones: estado.posiciones });
+                    io.to(codigoSala).emit('retrocesoCaballo', { palo: cartaPista.palo, posiciones: estado.posiciones });
+                    
+                    if(estabaEnAuto && estado.enCarrera && !estado.ganador) {
+                        estado.autoPlayInterval = setInterval(() => {
+                            sacarCartaLogica(codigoSala, estado);
+                        }, estado.configuracion.velocidadAutoPlay); // Reanudar con la velocidad configurada
+                    }
+
                 }, 1500);
             }
         }
-    });
+    }
 });
 
 app.post('/api/registrar', async (req, res) => {
