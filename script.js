@@ -180,6 +180,16 @@ const app = {
         alert("Configuración guardada para toda la sala.");
     },
 
+    actualizarInterfazAnfitrion: function() {
+        const btnConfig = document.getElementById('btn-config-sala');
+        if (this.esAnfitrion) {
+            btnConfig.style.display = 'block';
+        } else {
+            btnConfig.style.display = 'none';
+        }
+        this.actualizarEstadoBotonInicio();
+    },
+
     // --- APUESTAS ---
     agregarApuesta: function() {
         if (this.apuestas.length >= 4) return alert("Máximo 4 jugadores por carrera.");
@@ -427,26 +437,43 @@ socket.on('salaCreada', (data) => {
     app.esAnfitrion = true;
     app.configSala = data.estado.configuracion; // Sincronizar config default
     document.getElementById('sala-codigo').innerText = data.codigo;
-    document.getElementById('btn-config-sala').style.display = 'block'; // Mostrar botón config
     window.history.replaceState({}, '', `?sala=${data.codigo}`);
     
     app.mostrarVista('vista-lobby');
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
-    app.agregarMensajeChat('Sistema', `Eres el anfitrión. Puedes configurar la sala.`);
+    app.actualizarInterfazAnfitrion();
+    app.agregarMensajeChat('Sistema', `Sala ${data.codigo} creada. Eres el anfitrión.`);
 });
 
 socket.on('unidoASala', (data) => {
     app.salaActual = data.codigo;
-    app.esAnfitrion = false;
+    
+    // Al unirse, determinar si es el anfitrión comparando su nombre con el del estado de la sala
+    app.esAnfitrion = data.estado.anfitrion === app.usuarioActual.nombre;
+    
     app.configSala = data.estado.configuracion; // Sincronizar config
     document.getElementById('sala-codigo').innerText = data.codigo;
-    document.getElementById('btn-config-sala').style.display = 'none'; // Ocultar botón config
     window.history.replaceState({}, '', `?sala=${data.codigo}`);
 
     app.mostrarVista('vista-lobby');
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
+    app.actualizarInterfazAnfitrion();
+});
+
+socket.on('nuevoAnfitrion', (nuevoAnfitrionNombre) => {
+    if (app.usuarioActual && app.usuarioActual.nombre === nuevoAnfitrionNombre) {
+        app.esAnfitrion = true;
+        app.actualizarInterfazAnfitrion();
+        
+        // Si estábamos en medio de la carrera, mostrar los botones
+        if (document.getElementById('vista-juego').classList.contains('activa')) {
+            document.getElementById('btn-sacar').style.display = 'block';
+            document.getElementById('btn-auto').style.display = 'block';
+            document.getElementById('msg-esperando-anfitrion').style.display = 'none';
+        }
+    }
 });
 
 socket.on('configuracionActualizada', (config) => {

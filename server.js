@@ -66,6 +66,7 @@ async function conectarBD() {
 
 // --- GESTIÓN DE SALAS Y JUEGO ---
 const rooms = new Map();
+const disconnectTimeouts = new Map(); // Para manejar reconexiones si refrescan la página
 
 function generarCodigoSala() {
     return Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -123,7 +124,9 @@ io.on('connection', (socket) => {
     let salaActual = null;
     let nombreUsuario = null;
 
-    socket.on('usuarioConectado', (usuario) => { nombreUsuario = usuario.nombre; });
+    socket.on('usuarioConectado', (usuario) => { 
+        nombreUsuario = usuario.nombre; 
+    });
 
     socket.on('crearSala', () => {
         const codigo = generarCodigoSala();
@@ -142,58 +145,101 @@ io.on('connection', (socket) => {
         codigo = codigo ? codigo.toUpperCase() : "";
         if (!rooms.has(codigo)) return socket.emit('error', 'La sala no existe.');
         const estado = rooms.get(codigo);
-        if (estado.enCarrera) return socket.emit('error', 'La carrera ya empezó.');
+        
+        // Si la carrera empezó, solo dejamos entrar si ya estaba en la sala (reconectando)
+        if (estado.enCarrera && (!nombreUsuario || !estado.jugadores.includes(nombreUsuario))) {
+            return socket.emit('error', 'La carrera ya empezó.');
+        }
         
         socket.join(codigo);
         salaActual = codigo;
-        if (nombreUsuario && !estado.jugadores.includes(nombreUsuario)) estado.jugadores.push(nombreUsuario);
+        
+        // Cancelar el timeout de desconexión si estaba refrescando la página
+        if (nombreUsuario && disconnectTimeouts.has(nombreUsuario)) {
+            clearTimeout(disconnectTimeouts.get(nombreUsuario));
+            disconnectTimeouts.delete(nombreUsuario);
+        }
+        
+        if (nombreUsuario && !estado.jugadores.includes(nombreUsuario)) {
+            estado.jugadores.push(nombreUsuario);
+            io.to(codigo).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario || 'Alguien'} se unió a la sala.` });
+        } else if (nombreUsuario) {
+            io.to(codigo).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario} se ha reconectado.` });
+        }
         
         socket.emit('unidoASala', { codigo, estado });
-        
         io.to(codigo).emit('actualizarJugadores', estado.jugadores);
-        io.to(codigo).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario || 'Alguien'} se unió a la sala.` });
     });
 
+    // Evento de desconexión repentina (cerrar pestaña o recargar)
+    socket.on('disconnect', () => {
+        if (salaActual && nombreUsuario && rooms.has(salaActual)) {
+            const codigo = salaActual;
+            const nombre = nombreUsuario;
+            
+            // Damos 5 segundos de gracia por si fue solo un F5 (recarga)
+            const timeout = setTimeout(() => {
+                removerJugadorDeSala(codigo, nombre);
+                disconnectTimeouts.delete(nombre);
+            }, 5000);
+            
+            disconnectTimeouts.set(nombre, timeout);
+        }
+    });
+
+    // Salida explícita por botón
     socket.on('salirDeSala', () => {
-        if (salaActual && rooms.has(salaActual)) {
-            const estado = rooms.get(salaActual);
+        if (salaActual && nombreUsuario && rooms.has(salaActual)) {
             socket.leave(salaActual);
             
-            if(nombreUsuario) {
-                estado.jugadores = estado.jugadores.filter(n => n !== nombreUsuario);
-                
-                if (!estado.enCarrera) {
-                    const apuestaIndex = estado.apuestas.findIndex(a => a.nombre === nombreUsuario);
-                    if (apuestaIndex !== -1) {
-                        estado.apuestas.splice(apuestaIndex, 1);
-                        io.to(salaActual).emit('actualizarApuestas', estado.apuestas);
-                        io.to(salaActual).emit('estadoJuegoActualizado', { 
-                            apuestas: estado.apuestas.length, 
-                            jugadores: estado.jugadores.length 
-                        });
-                    }
-                }
-
-                // Si el anfitrión sale, designar a otro o cerrar sala
-                if (estado.anfitrion === nombreUsuario) {
-                    if (estado.jugadores.length > 0) {
-                        estado.anfitrion = estado.jugadores[0]; // El siguiente es anfitrión
-                        io.to(salaActual).emit('mensajeChat', { usuario: 'Sistema', texto: `${estado.anfitrion} es el nuevo anfitrión.` });
-                        // Aquí idealmente emitiríamos un evento para que el nuevo anfitrión vea los botones
-                    }
-                }
+            if (disconnectTimeouts.has(nombreUsuario)) {
+                clearTimeout(disconnectTimeouts.get(nombreUsuario));
+                disconnectTimeouts.delete(nombreUsuario);
             }
-
-            io.to(salaActual).emit('actualizarJugadores', estado.jugadores);
-            io.to(salaActual).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombreUsuario} salió de la sala.` });
-
-            if (estado.jugadores.length === 0) {
-                if(estado.autoPlayInterval) clearInterval(estado.autoPlayInterval);
-                rooms.delete(salaActual);
-            }
+            
+            removerJugadorDeSala(salaActual, nombreUsuario);
             salaActual = null;
         }
     });
+
+    // Función auxiliar para quitar al jugador, reasignar anfitrión y limpiar sala
+    function removerJugadorDeSala(codigoSala, nombre) {
+        const estado = rooms.get(codigoSala);
+        if (!estado) return;
+
+        estado.jugadores = estado.jugadores.filter(n => n !== nombre);
+        
+        // Si no ha empezado, quitar su apuesta
+        if (!estado.enCarrera) {
+            const apuestaIndex = estado.apuestas.findIndex(a => a.nombre === nombre);
+            if (apuestaIndex !== -1) {
+                estado.apuestas.splice(apuestaIndex, 1);
+                io.to(codigoSala).emit('actualizarApuestas', estado.apuestas);
+                io.to(codigoSala).emit('estadoJuegoActualizado', { 
+                    apuestas: estado.apuestas.length, 
+                    jugadores: estado.jugadores.length 
+                });
+            }
+        }
+
+        // Si era el anfitrión, nombrar a otro
+        if (estado.anfitrion === nombre) {
+            if (estado.jugadores.length > 0) {
+                estado.anfitrion = estado.jugadores[0]; // El siguiente de la lista
+                io.to(codigoSala).emit('nuevoAnfitrion', estado.anfitrion);
+                io.to(codigoSala).emit('mensajeChat', { usuario: 'Sistema', texto: `${estado.anfitrion} es el nuevo anfitrión.` });
+            }
+        }
+
+        io.to(codigoSala).emit('actualizarJugadores', estado.jugadores);
+        io.to(codigoSala).emit('mensajeChat', { usuario: 'Sistema', texto: `${nombre} salió de la sala.` });
+
+        // Limpiar la sala si queda vacía
+        if (estado.jugadores.length === 0) {
+            if(estado.autoPlayInterval) clearInterval(estado.autoPlayInterval);
+            rooms.delete(codigoSala);
+        }
+    }
 
     // --- CONFIGURACIÓN DE SALA ---
     socket.on('actualizarConfigSala', (nuevaConfig) => {
