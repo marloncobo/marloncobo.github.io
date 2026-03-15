@@ -146,11 +146,6 @@ io.on('connection', (socket) => {
         if (!rooms.has(codigo)) return socket.emit('error', 'La sala no existe.');
         const estado = rooms.get(codigo);
         
-        // Si la carrera empezó, solo dejamos entrar si ya estaba en la sala (reconectando)
-        if (estado.enCarrera && (!nombreUsuario || !estado.jugadores.includes(nombreUsuario))) {
-            return socket.emit('error', 'La carrera ya empezó.');
-        }
-        
         socket.join(codigo);
         salaActual = codigo;
         
@@ -303,6 +298,8 @@ io.on('connection', (socket) => {
         if (!salaActual || !rooms.has(salaActual)) return;
         const estado = rooms.get(salaActual);
         
+        if (estado.enCarrera) return socket.emit('error', 'La carrera ya está en curso.');
+        
         // Solo el anfitrión inicia
         if (estado.anfitrion !== nombreUsuario) return socket.emit('error', 'Solo el anfitrión puede iniciar la carrera.');
 
@@ -314,6 +311,12 @@ io.on('connection', (socket) => {
 
         inicializarJuegoEnSala(estado);
         io.to(salaActual).emit('inicioCarrera', estado);
+    });
+
+    socket.on('solicitarEstadoCarrera', () => {
+        if (!salaActual || !rooms.has(salaActual)) return;
+        const estado = rooms.get(salaActual);
+        socket.emit('estadoCarreraActual', estado);
     });
 
     socket.on('toggleAutoPlay', (isActive) => {

@@ -222,9 +222,14 @@ const app = {
 
     actualizarEstadoBotonInicio: function() {
         const btn = document.getElementById('btn-iniciar-carrera');
+        const btnRegresar = document.getElementById('btn-regresar-carrera');
         const estadoTxt = document.getElementById('estado-sala');
         
-        // Si no es anfitrión, ocultar el botón completamente o deshabilitarlo permanentemente
+        // Si hay una carrera en curso
+        if (btnRegresar && btnRegresar.style.display === 'block') {
+            return; // No actualizar el estado si ya estamos viendo el botón de regresar
+        }
+        
         if (!this.esAnfitrion) {
             btn.disabled = true;
             btn.style.backgroundColor = "#95a5a6";
@@ -233,7 +238,6 @@ const app = {
             return;
         }
 
-        // Lógica solo para el anfitrión
         if (this.jugadoresEnSala > 0 && (this.apuestasRealizadas === this.jugadoresEnSala || this.configSala.forzarInicio)) {
             btn.disabled = false;
             btn.style.backgroundColor = "#2ecc71";
@@ -249,6 +253,10 @@ const app = {
 
     irALaCarrera: function() { 
         if(this.esAnfitrion) socket.emit('iniciarCarrera'); 
+    },
+
+    regresarALaCarrera: function() {
+        socket.emit('solicitarEstadoCarrera');
     },
 
     volverAlLobby: function() {
@@ -328,13 +336,17 @@ const juego = {
         this.cartasVolteadas = estado.cartasVolteadas;
         this.pista = estado.pista;
         
-        document.getElementById('log').innerHTML = "<em>Carrera iniciada. ¡Buena suerte!</em><br>";
-        document.getElementById('mazo-visual').style.opacity = '1';
-        const cartaActiva = document.getElementById('carta-activa');
-        cartaActiva.className = "carta-grande carta-vacia";
-        cartaActiva.innerHTML = "TU CARTA";
-        cartaActiva.style.borderColor = "rgba(255,255,255,0.3)";
-        cartaActiva.style.color = "rgba(255,255,255,0.5)";
+        // Solo resetear log si es una carrera nueva (cartas volteadas 0 y posiciones en 0)
+        let esNueva = Object.values(this.posiciones).every(val => val === 0);
+        if (esNueva) {
+            document.getElementById('log').innerHTML = "<em>Carrera iniciada. ¡Buena suerte!</em><br>";
+            document.getElementById('mazo-visual').style.opacity = '1';
+            const cartaActiva = document.getElementById('carta-activa');
+            cartaActiva.className = "carta-grande carta-vacia";
+            cartaActiva.innerHTML = "TU CARTA";
+            cartaActiva.style.borderColor = "rgba(255,255,255,0.3)";
+            cartaActiva.style.color = "rgba(255,255,255,0.5)";
+        }
         
         // Control de UI según rol
         const btnSacar = document.getElementById('btn-sacar');
@@ -344,8 +356,13 @@ const juego = {
         if (app.esAnfitrion) {
             btnSacar.style.display = 'block';
             btnAuto.style.display = 'block';
-            btnAuto.innerHTML = "▶ Auto";
-            btnAuto.style.backgroundColor = "#3498db";
+            if (!estado.autoPlayInterval) {
+                btnAuto.innerHTML = "▶ Auto";
+                btnAuto.style.backgroundColor = "#3498db";
+            } else {
+                btnAuto.innerHTML = "⏸ Pausar";
+                btnAuto.style.backgroundColor = "#e67e22";
+            }
             msgEsperando.style.display = 'none';
         } else {
             btnSacar.style.display = 'none';
@@ -437,6 +454,7 @@ socket.on('salaCreada', (data) => {
     app.esAnfitrion = true;
     app.configSala = data.estado.configuracion; // Sincronizar config default
     document.getElementById('sala-codigo').innerText = data.codigo;
+    document.getElementById('btn-config-sala').style.display = 'block'; // Mostrar botón config
     window.history.replaceState({}, '', `?sala=${data.codigo}`);
     
     app.mostrarVista('vista-lobby');
@@ -460,6 +478,15 @@ socket.on('unidoASala', (data) => {
     app.jugadoresEnSala = data.estado.jugadores.length;
     app.renderizarListaApuestas(data.estado.apuestas);
     app.actualizarInterfazAnfitrion();
+    
+    if (data.estado.enCarrera) {
+        document.getElementById('btn-iniciar-carrera').style.display = 'none';
+        document.getElementById('btn-regresar-carrera').style.display = 'block';
+        document.getElementById('estado-sala').innerText = "La carrera ya está en curso.";
+    } else {
+        document.getElementById('btn-iniciar-carrera').style.display = 'block';
+        document.getElementById('btn-regresar-carrera').style.display = 'none';
+    }
 });
 
 socket.on('nuevoAnfitrion', (nuevoAnfitrionNombre) => {
@@ -501,6 +528,19 @@ socket.on('estadoJuegoActualizado', (data) => {
 socket.on('inicioCarrera', (estado) => {
     app.mostrarVista('vista-juego');
     juego.inicializarDatos(estado);
+    // Cambiar botones en lobby
+    document.getElementById('btn-iniciar-carrera').style.display = 'none';
+    document.getElementById('btn-regresar-carrera').style.display = 'block';
+    document.getElementById('estado-sala').innerText = "La carrera está en curso.";
+});
+
+socket.on('estadoCarreraActual', (estado) => {
+    if (estado.enCarrera) {
+        app.mostrarVista('vista-juego');
+        juego.inicializarDatos(estado);
+    } else {
+        alert("La carrera no está en curso.");
+    }
 });
 
 socket.on('mensajeChat', (data) => {
@@ -532,6 +572,11 @@ socket.on('finCarrera', (data) => {
         btnAuto.innerHTML = "▶ Auto";
         btnAuto.style.backgroundColor = "#3498db";
     }
+    
+    document.getElementById('btn-iniciar-carrera').style.display = 'block';
+    document.getElementById('btn-regresar-carrera').style.display = 'none';
+    app.actualizarEstadoBotonInicio();
+
     if (data.ganador) {
         juego.logear(`🏆 <strong>¡GANÓ ${data.ganador.toUpperCase()}!</strong>`);
         setTimeout(() => app.procesarResultados(data.ganador), 1500);
