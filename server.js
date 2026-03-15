@@ -268,6 +268,11 @@ io.on('connection', (socket) => {
         if (!salaActual || !rooms.has(salaActual)) return;
         const estado = rooms.get(salaActual);
         if (estado.enCarrera) return;
+
+        // VERIFICAR QUE NO HAYA APOSTADO YA AL MISMO CABALLO OTRO JUGADOR
+        if (estado.apuestas.some(a => a.caballo === apuesta.caballo)) {
+            return socket.emit('error', `Alguien ya apostó por ${apuesta.caballo}. Elige otro caballo.`);
+        }
         
         if (db) {
             try {
@@ -302,6 +307,11 @@ io.on('connection', (socket) => {
         
         // Solo el anfitrión inicia
         if (estado.anfitrion !== nombreUsuario) return socket.emit('error', 'Solo el anfitrión puede iniciar la carrera.');
+
+        // Validación: Mínimo 1 apuesta
+        if (estado.apuestas.length === 0) {
+            return socket.emit('error', 'Debe haber al menos 1 apuesta para iniciar la carrera.');
+        }
 
         // Validación: Todos apuestan O el anfitrión forzó el inicio
         if (estado.apuestas.length < estado.jugadores.length && !estado.configuracion.forzarInicio) {
